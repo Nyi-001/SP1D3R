@@ -1,0 +1,16 @@
+profiles:
+  quick:
+    modules: ["fingerprint", "waf", "port", "subdomain"]
+    ports: "1-1024,8080,8443"
+    wordlist: "wordlists/subdomains_small.txt"
+    threads: 100
+  standard:
+    modules: ["fingerprint", "waf", "dns", "subdomain", "port", "ssl", "web"]
+    ports: "1-2000,8080,8443"
+    wordlist: "wordlists/subdomains.txt"
+    threads: 75
+  deep:
+    modules: ["fingerprint", "waf", "dns", "subdomain", "port", "ssl", "web", "vuln"]
+    ports: "1-65535"
+    wordlist: "wordlists/subdomains_large.txt"
+    threads: 50
