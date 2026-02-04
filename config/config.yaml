@@ -1,0 +1,30 @@
+scanning:
+  threads: 50
+  timeout: 30
+  retries: 2
+  rate_limit: 0
+  user_agent: "AutomatedPentestTool/1.0"
+  stealth_mode: false
+
+modules:
+  port_scanner:
+    enabled: true
+    ports: "1-1000"
+  subdomain_enum:
+    enabled: true
+    wordlist: "wordlists/subdomains.txt"
+  vuln_scanner:
+    enabled: true
+    cve_check: false
+  web_scanner:
+    enabled: true
+    depth: 2
+  ssl_tester:
+    enabled: true
+  dns_analyzer:
+    enabled: true
+
+reporting:
+  formats: ["html", "json"]
+  output_dir: "reports/output"
+  severity_threshold: "low"
