@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  pentest-tool:
+    build: .
+    image: automated-pentest-tool:latest
+    container_name: pentest-tool
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Override default command for interactive use
+    # Example: docker-compose run pentest-tool --target example.com --scan-type quick
+    stdin_open: true
+    tty: true
+
+  # API service (optional)
+  pentest-api:
+    build: .
+    image: automated-pentest-tool:latest
+    container_name: pentest-api
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["python3", "api/rest_api.py"]
