@@ -99,8 +99,10 @@ class WAFDetector:
                                 self.logger.info(f"[+] WAF detected via headers: {waf_name}")
                                 return waf_name
         
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             self.logger.debug(f"Header check error: {e}")
+        except Exception as e:
+            self.logger.debug(f"Unexpected error in header check: {e}")
         
         return None
     
@@ -150,8 +152,10 @@ class WAFDetector:
                                 blocked_count += 1
                                 block_patterns.append("WAF block page detected")
                     
-                    except Exception:
-                        pass
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                        self.logger.debug(f"Payload test error: {e}")
+                    except Exception as e:
+                        self.logger.debug(f"Unexpected error in payload test: {e}")
                 
                 # If multiple payloads were blocked, likely a WAF
                 if blocked_count >= 2:

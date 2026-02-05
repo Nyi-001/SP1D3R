@@ -314,8 +314,10 @@ class TechFingerprint:
                                 'source': f'Path {path} exists'
                             })
                             break
-                except:
-                    pass
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    self.logger.debug(f"Path check error for {path}: {e}")
+                except Exception as e:
+                    self.logger.debug(f"Unexpected error checking {path}: {e}")
         
         return technologies
     

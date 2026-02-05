@@ -203,7 +203,9 @@ class SSLTester:
             # Version
             info['version'] = cert.get('version', '')
         
-        except Exception as e:
+        except (KeyError, ValueError) as e:
             self.logger.debug(f"Certificate parsing error: {e}")
+        except Exception as e:
+            self.logger.debug(f"Unexpected error parsing certificate: {e}")
         
         return info
