@@ -1,7 +1,7 @@
 # Core dependencies
 aiohttp>=3.9.0
 aiofiles>=23.2.0
-asyncio>=3.4.3
+# asyncio is a built-in Python module, not needed in requirements
 requests>=2.31.0
 
 # Network and scanning
@@ -27,8 +27,8 @@ cvss>=2.6
 python-nvd3>=0.15.0
 
 # Subdomain enumeration
-sublist3r>=1.1
-subfinder>=2.6.0
+# Note: sublist3r and subfinder are not available on PyPI or have version issues
+# These tools can be installed separately if needed
 
 # Reporting
 jinja2>=3.1.0
@@ -66,7 +66,7 @@ mypy>=1.7.0
 
 # Security
 python-magic>=0.4.27
-hashlib>=20081119
+# hashlib is a built-in Python module, not needed in requirements
 
 # Data processing
 pandas>=2.1.0
