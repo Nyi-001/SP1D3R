@@ -6,6 +6,17 @@ from colorama import init, Fore, Style
 
 init(autoreset=True)
 
+BANNER = r"""
+   _   _           _            _           _              _             
+  /_\ | |_ ___ ___| |_ ___  ___| |_ ___ ___| |_ _ _  __ _| |__  ___ _ _ 
+ / _ \|  _/ -_) -_)  _/ _ \/ _ \  _/ -_)___|  _| ' \/ _` | '_ \/ -_) '_|
+/_/ \_\\__\___\___|\__\___/\___/\__\___|    \__|_||_\__,_|_.__/\___|_|  
+"""
+
+def log_banner():
+    print(BANNER)
+    print(" Automated Penetration Testing Tool")
+    print(" Author: Pangerkumzuk Longkumer | NEXUSCIPHERGUARD INDIA\n")
 
 def setup_logger(verbose: bool = False) -> logging.Logger:
     logger = logging.getLogger("automated-pentest-tool")
