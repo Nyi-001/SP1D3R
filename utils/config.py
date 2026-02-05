@@ -1,20 +1,30 @@
+# utils/config.py
+import yaml
 from pathlib import Path
 from typing import Dict, Any
 
-import yaml
-
+DEFAULT_CONFIG = {
+    "scanning": {
+        "threads": 50,
+        "timeout": 30,
+        "rate_limit": None,
+        "user_agent": "AutomatedPentestTool/1.0",
+        "stealth_mode": False,
+    }
+}
 
 def load_config(path: str) -> Dict[str, Any]:
     cfg_path = Path(path)
     if not cfg_path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
+        # fall back to defaults if no config file
+        return DEFAULT_CONFIG.copy()
 
-    with cfg_path.open() as f:
-        config = yaml.safe_load(f) or {}
+    with cfg_path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
 
-    # minimal defaults
-    config.setdefault("scanning", {})
-    config["scanning"].setdefault("threads", 50)
-    config["scanning"].setdefault("timeout", 30)
-
-    return config
+    # merge with defaults
+    cfg = DEFAULT_CONFIG.copy()
+    cfg.update(data)
+    if "scanning" in data:
+        cfg["scanning"].update(data["scanning"])
+    return cfg
