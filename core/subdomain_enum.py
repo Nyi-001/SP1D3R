@@ -2,7 +2,7 @@
 import asyncio
 import aiohttp
 import aiodns
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Dict
 import ssl
 import certifi
 
