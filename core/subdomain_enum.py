@@ -125,7 +125,10 @@ class SubdomainEnumerator:
             if await self._resolves(subdomain):
                 self.found_subdomains.add(subdomain)
                 self.subdomain_sources.setdefault(subdomain, set()).add(source)
-                self.logger.info(f"[+] Found ({source}): {subdomain}")
+                # Individual candidates are useful in the verbose audit log,
+                # but are noise in normal mode; the phase summary remains
+                # visible to all users.
+                self.logger.debug(f"[+] Found ({source}): {subdomain}")
 
     async def _resolves(self, hostname: str) -> bool:
         for record_type in ('A', 'AAAA', 'CNAME'):

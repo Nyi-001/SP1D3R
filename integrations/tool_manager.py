@@ -71,11 +71,11 @@ class ToolManager:
                 result["tool_runs"].append(run)
                 color = Fore.GREEN if run["status"] == "completed" else Fore.RED
                 self._console(f"[TOOL] {name}: {run['status']} in {run['duration_seconds']}s | findings={run['finding_count']} assets={run['asset_count']}", color)
-                self._console(f"[RESULT] {name}: normalized findings={run['finding_count']} | discovered assets={run['asset_count']}", Fore.WHITE)
-                if findings or assets:
+                if self.verbose:
+                    self._console(f"[RESULT] {name}: normalized findings={run['finding_count']} | discovered assets={run['asset_count']}", Fore.WHITE)
                     self._print_verbose_results(name, findings, assets)
-                else:
-                    self._console("  No normalized findings or assets returned", Fore.WHITE)
+                elif findings or assets:
+                    self.logger.debug(f"{name}: normalized findings={run['finding_count']} | discovered assets={run['asset_count']}")
             except Exception as exc:
                 message = f"{name}: {exc}"
                 self.logger.warning(message)
