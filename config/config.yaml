@@ -1,10 +1,32 @@
 scanning:
   threads: 50
   timeout: 30
+  port_timeout: 5
   retries: 2
   rate_limit: 0
   user_agent: "AutomatedPentestTool/1.0"
   stealth_mode: false
+  max_requests: 2000
+  payload_limit: 50
+  request_delay: 0
+  whatweb_timeout: 15
+  # 0 means dirsearch runs until its wordlist is complete.
+  dirsearch_timeout: 0
+
+# Local, version-aware CVE suggestions are generated automatically after
+# technology and service discovery. Matches are suggestions, not confirmed
+# vulnerabilities; extend this catalog with reviewed vendor advisories.
+cve_catalog: "data/cve_catalog.json"
+
+scope:
+  allowed_hosts: []
+  excluded_paths:
+    - '/logout*'
+    - '/delete*'
+    - '/remove*'
+    - '/checkout*'
+    - '/payment*'
+    - '/password/reset*'
 
 modules:
   port_scanner:
@@ -25,6 +47,7 @@ modules:
     enabled: true
 
 reporting:
-  formats: ["html", "json"]
-  output_dir: "reports/output"
+  formats: ["pdf", "html", "json"]
+  output_dir: "reports"
   severity_threshold: "low"
+  include_evidence: true

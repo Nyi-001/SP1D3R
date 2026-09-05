@@ -20,7 +20,11 @@ class PortScanner:
     def __init__(self, config: Dict, logger):
         self.config = config
         self.logger = logger
-        self.timeout = config.get('scanning', {}).get('timeout', 5)
+        scanning = config.get('scanning', {})
+        # Port connection timeouts should be short and independent from the
+        # slower HTTP response timeout; otherwise a filtered port range can
+        # make a vulnerability-only scan appear to hang.
+        self.timeout = scanning.get('port_timeout', min(scanning.get('timeout', 5), 5))
         self.threads = config.get('scanning', {}).get('threads', 50)
     
     async def scan(self, target: str, port_range: str) -> List[Dict]:
@@ -72,6 +76,12 @@ class PortScanner:
                     'state': 'open',
                     'service': service,
                     'banner': banner,
+                    # A port number is only a service hint. Do not present
+                    # the IANA default as proof that FTP/Telnet/etc. is
+                    # actually running; many hosts accept TCP and expose no
+                    # application banner (and proxies can make this worse).
+                    'service_confidence': 'high' if banner else 'low',
+                    'service_source': 'banner' if banner else 'port mapping only',
                     'protocol': 'tcp'
                 }
             except (asyncio.TimeoutError, ConnectionRefusedError, OSError):

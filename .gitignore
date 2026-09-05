@@ -38,9 +38,14 @@ logs/
 
 # Reports
 reports/output/
+reports/*/
 *.html
 *.pdf
 *.json
+
+# Captured requests may contain cookies, bearer tokens, or other secrets.
+api.txt
+request.txt
 
 # Temporary files
 *.tmp

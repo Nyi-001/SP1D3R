@@ -5,6 +5,7 @@ import ssl
 import certifi
 import re
 from typing import Dict, Any, List
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 
@@ -94,6 +95,7 @@ class TechFingerprint:
         self.config = config
         self.logger = logger
         self.timeout = config.get('scanning', {}).get('timeout', 10)
+        self.last_observation: Dict[str, Any] = {}
     
     async def scan(self, target: str) -> List[Dict[str, Any]]:
         """Fingerprint technologies used by target"""
@@ -103,11 +105,22 @@ class TechFingerprint:
             target = f"http://{target}"
         
         technologies = []
+        self.last_observation = {
+            'target': target,
+            'status_code': None,
+            'final_url': target,
+            'server': '',
+            'powered_by': '',
+            'content_type': '',
+            'error': '',
+        }
         
         try:
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            ssl_context = (
+                False
+                if self.config.get('scanning', {}).get('insecure_tls', False)
+                else ssl.create_default_context(cafile=certifi.where())
+            )
             
             async with aiohttp.ClientSession() as session:
                 # Fetch main page
@@ -119,6 +132,13 @@ class TechFingerprint:
                     ) as response:
                         headers = response.headers
                         html = await response.text()
+                        self.last_observation.update({
+                            'status_code': response.status,
+                            'final_url': str(response.url),
+                            'server': next((str(value) for name, value in headers.items() if name.lower() == 'server'), ''),
+                            'powered_by': next((str(value) for name, value in headers.items() if name.lower() == 'x-powered-by'), ''),
+                            'content_type': headers.get('Content-Type', ''),
+                        })
                         
                         # Check headers for technology signatures
                         header_techs = self._check_headers(headers)
@@ -133,6 +153,7 @@ class TechFingerprint:
                         technologies.extend(meta_techs)
                 
                 except Exception as e:
+                    self.last_observation['error'] = str(e)
                     self.logger.debug(f"Error fetching page: {e}")
                 
                 # Check for common paths
@@ -140,6 +161,7 @@ class TechFingerprint:
                 technologies.extend(path_techs)
         
         except Exception as e:
+            self.last_observation['error'] = str(e)
             self.logger.error(f"Fingerprinting error: {e}")
         
         # Deduplicate technologies
@@ -161,11 +183,13 @@ class TechFingerprint:
         headers_str = ' '.join([f"{k}:{v}" for k, v in headers.items()])
         
         # Check Server header
-        if 'Server' in headers:
-            server = headers['Server']
+        server = next((value for name, value in headers.items() if str(name).lower() == 'server'), '')
+        if server:
+            server_detected = False
             for tech_name, patterns in self.TECH_SIGNATURES.items():
                 for pattern in patterns:
-                    if re.search(pattern, server, re.IGNORECASE):
+                    if re.search(pattern, f"Server:{server}", re.IGNORECASE):
+                        server_detected = True
                         technologies.append({
                             'name': tech_name,
                             'category': self._get_category(tech_name),
@@ -174,13 +198,21 @@ class TechFingerprint:
                             'source': 'Server header'
                         })
                         break
+            if server and not server_detected:
+                technologies.append({
+                    'name': str(server),
+                    'category': 'Web Server',
+                    'version': self._extract_version(str(server)),
+                    'confidence': 'high',
+                    'source': 'Server header'
+                })
         
         # Check X-Powered-By
-        if 'X-Powered-By' in headers:
-            powered_by = headers['X-Powered-By']
+        powered_by = next((value for name, value in headers.items() if str(name).lower() == 'x-powered-by'), '')
+        if powered_by:
             for tech_name, patterns in self.TECH_SIGNATURES.items():
                 for pattern in patterns:
-                    if re.search(pattern, powered_by, re.IGNORECASE):
+                    if re.search(pattern, f"X-Powered-By:{powered_by}", re.IGNORECASE):
                         technologies.append({
                             'name': tech_name,
                             'category': self._get_category(tech_name),
@@ -191,8 +223,8 @@ class TechFingerprint:
                         break
         
         # Check cookies
-        if 'Set-Cookie' in headers:
-            cookies = headers['Set-Cookie']
+        cookies = next((value for name, value in headers.items() if str(name).lower() == 'set-cookie'), '')
+        if cookies:
             for tech_name, patterns in self.TECH_SIGNATURES.items():
                 for pattern in patterns:
                     if re.search(pattern, cookies, re.IGNORECASE):
@@ -287,39 +319,57 @@ class TechFingerprint:
     async def _check_common_paths(self, session, target: str, ssl_context) -> List[Dict[str, Any]]:
         """Check for common technology-specific paths"""
         technologies = []
-        
         common_paths = {
-            'WordPress': ['/wp-admin/', '/wp-login.php'],
-            'Joomla': ['/administrator/'],
-            'Drupal': ['/user/login'],
-            'phpMyAdmin': ['/phpmyadmin/', '/pma/'],
+            'WordPress': (['/wp-admin/', '/wp-login.php'], ('wordpress', 'wp-login', 'wp-content')),
+            'Joomla': (['/administrator/'], ('joomla', 'com_')),
+            'Drupal': (['/user/login'], ('drupal', 'sites/default')),
+            'phpMyAdmin': (['/phpmyadmin/', '/pma/'], ('phpmyadmin', 'pma')),
         }
-        
-        for tech_name, paths in common_paths.items():
-            for path in paths:
-                try:
-                    url = f"{target}{path}"
-                    async with session.get(
-                        url,
-                        ssl=ssl_context,
-                        timeout=aiohttp.ClientTimeout(total=5),
-                        allow_redirects=False
-                    ) as response:
-                        if response.status in [200, 301, 302, 401, 403]:
-                            technologies.append({
-                                'name': tech_name,
-                                'category': self._get_category(tech_name),
-                                'version': None,
-                                'confidence': 'high',
-                                'source': f'Path {path} exists'
-                            })
-                            break
-                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    self.logger.debug(f"Path check error for {path}: {e}")
-                except Exception as e:
-                    self.logger.debug(f"Unexpected error checking {path}: {e}")
-        
+        checks = [
+            self._check_common_path(session, target, ssl_context, tech_name, path, markers)
+            for tech_name, (paths, markers) in common_paths.items()
+            for path in paths
+        ]
+        results = await asyncio.gather(*checks, return_exceptions=True)
+        seen = set()
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            name = result.get('name')
+            if name and name not in seen:
+                seen.add(name)
+                technologies.append(result)
         return technologies
+
+    async def _check_common_path(self, session, target: str, ssl_context, tech_name: str, path: str, markers) -> Dict[str, Any]:
+        """Probe one fingerprint path without serially delaying the scan."""
+        try:
+            # A target may contain a query string such as ``/?page_id=965``.
+            # Append discovery paths to the origin path, never after the
+            # query string.
+            url = urljoin(target, path)
+            async with session.get(
+                url,
+                ssl=ssl_context,
+                timeout=aiohttp.ClientTimeout(total=5),
+                allow_redirects=False
+            ) as response:
+                body = await response.text(errors='ignore') if response.status == 200 else ''
+                location = response.headers.get('Location', '').lower()
+                verified = any(marker in body.lower() for marker in markers) or any(marker in location for marker in markers)
+                if verified:
+                    return {
+                        'name': tech_name,
+                        'category': self._get_category(tech_name),
+                        'version': None,
+                        'confidence': 'high',
+                        'source': f'Path {path} exists'
+                    }
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.debug(f"Path check error for {path}: {e}")
+        except Exception as e:
+            self.logger.debug(f"Unexpected error checking {path}: {e}")
+        return {}
     
     def _get_category(self, tech_name: str) -> str:
         """Determine technology category"""

@@ -116,12 +116,11 @@ class VulnerabilityScanner:
         return findings
     
     async def _check_known_cves(self, target: str) -> List[Dict]:
-        """Check for known CVEs (placeholder for CVE database integration)"""
-        findings = []
-        
-        # This would integrate with NVD, CVE databases
-        # Requires technology detection first to match versions with CVEs
-        
-        self.logger.info("CVE checking requires technology fingerprinting")
-        
-        return findings
+        """Keep the optional legacy hook non-invasive.
+
+        Version-aware CVE correlation is performed by ``CVESuggestionMatcher``
+        after fingerprinting and port discovery complete. It is intentionally
+        kept separate from confirmed findings.
+        """
+        self.logger.info("Version-based CVE suggestions are generated from discovered fingerprints")
+        return []

@@ -6,6 +6,7 @@ from typing import Dict, Any
 import uuid
 import time
 import asyncio
+import copy
 import sys
 from pathlib import Path
 
@@ -29,7 +30,14 @@ config = load_config('config/config.yaml')
 def run_scan_async(scan_id: str, params: Dict[str, Any]) -> None:
     """Run scan asynchronously"""
     try:
-        scanner = PentestScanner(config, logger)
+        scan_config = copy.deepcopy(config)
+        scan_config['scope'] = {
+            'allowed_hosts': params.get('allowed_hosts', []),
+            'excluded_paths': params.get('excluded_paths', []),
+            'active_checks': bool(params.get('active', False)),
+            'wordlist': params.get('wordlist'),
+        }
+        scanner = PentestScanner(scan_config, logger)
         
         # Prepare scan parameters
         scan_params = {
@@ -40,7 +48,8 @@ def run_scan_async(scan_id: str, params: Dict[str, Any]) -> None:
             'wordlist': params.get('wordlist'),
             'test_sqli': params.get('test_sqli', False),
             'test_xss': params.get('test_xss', False),
-            'cve_check': params.get('cve_check', False)
+            'cve_check': params.get('cve_check', False),
+            'external_tools': params.get('external_tools', [])
         }
         
         # Run scan
@@ -64,6 +73,8 @@ def start_scan():
     
     if 'target' not in data:
         return jsonify({'error': 'target is required'}), 400
+    if not isinstance(data.get('allowed_hosts'), list) or not data['allowed_hosts']:
+        return jsonify({'error': 'allowed_hosts is required and must be a non-empty list'}), 400
     
     scan_id = str(uuid.uuid4())
     scans[scan_id] = {
@@ -136,7 +147,7 @@ def list_scans():
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""
-    return jsonify({'status': 'healthy', 'service': 'automated-pentest-tool'})
+    return jsonify({'status': 'healthy', 'service': 'sp1d3r'})
 
 
 def create_app():
@@ -145,7 +156,7 @@ def create_app():
 
 
 if __name__ == '__main__':
-    print("Starting Automated Penetration Testing Tool API")
+    print("Starting SP1D3R API")
     print("API will be available at http://localhost:5000")
     print("Endpoints:")
     print("  POST   /api/scan              - Start new scan")

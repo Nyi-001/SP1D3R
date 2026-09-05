@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Comprehensive functionality test for the pentest tool"""
+"""Comprehensive functionality test for SP1D3R."""
 import sys
 import asyncio
+
+# This file is an executable smoke runner. The focused pytest suite lives in
+# tests/; prevent pytest from collecting these boolean-returning helpers as
+# ordinary test functions and reporting misleading warnings.
+__test__ = False
 
 def test_imports():
     """Test all critical imports"""
@@ -55,7 +60,7 @@ def test_logger():
         print(f"❌ Logger test failed: {e}")
         return False
 
-async def test_scanner():
+async def _run_scanner_test():
     """Test scanner functionality"""
     print("\nTesting scanner...")
     try:
@@ -65,13 +70,24 @@ async def test_scanner():
         
         logger = setup_logger(verbose=False)
         config = load_config('config/config.yaml')
+        # The scanner now requires an explicit scope even when used as a
+        # library, matching the CLI safety model.
+        config['scope'] = {
+            **config.get('scope', {}),
+            'allowed_hosts': ['127.0.0.1'],
+            'active_checks': False,
+        }
         scanner = PentestScanner(config, logger)
         
         # Test with minimal scan
         results = await scanner.scan({
             'target': '127.0.0.1',
             'scan_type': 'quick',
-            'module': 'port'
+            'module': 'port',
+            # Keep the smoke test bounded. The CLI default is intentionally
+            # broader, but probing 1-1000 makes this test wait on a closed
+            # loopback host and obscures real regressions.
+            'ports': '1-20'
         })
         
         assert 'scan_info' in results
@@ -83,6 +99,11 @@ async def test_scanner():
     except Exception as e:
         print(f"❌ Scanner test failed: {e}")
         return False
+
+
+def test_scanner():
+    """Pytest-compatible wrapper for the asynchronous scanner check."""
+    return asyncio.run(_run_scanner_test())
 
 def test_report_generator():
     """Test report generation"""
@@ -134,14 +155,14 @@ def test_api():
 async def run_all_tests():
     """Run all tests"""
     print("="*60)
-    print("AUTOMATED PENTEST TOOL - COMPREHENSIVE TEST SUITE")
+    print("SP1D3R - COMPREHENSIVE TEST SUITE")
     print("="*60)
     
     tests = [
         ("Imports", test_imports()),
         ("Configuration", test_config()),
         ("Logger", test_logger()),
-        ("Scanner", await test_scanner()),
+        ("Scanner", await _run_scanner_test()),
         ("Report Generator", test_report_generator()),
         ("REST API", test_api()),
     ]

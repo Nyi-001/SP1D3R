@@ -1,83 +1,48 @@
-# Core dependencies
-aiohttp>=3.9.0
-aiofiles>=23.2.0
-# asyncio is a built-in Python module, not needed in requirements
-requests>=2.31.0
+# Automated Pentest Tool — web-focused runtime dependencies
+#
+# External security binaries are intentionally not installed by pip. Install
+# and version them separately using the tool manifest in
+# WEB_PENTEST_REQUIREMENTS.md.
 
-# Network and scanning
-scapy>=2.5.0
-python-nmap>=0.7.1
-aiodns>=3.1.0
-dnspython>=2.4.0
-pyshark>=0.6
+# Existing async scanner and web crawler
+aiohttp>=3.9,<4
+aiodns>=3.2,<4
+aiofiles>=23.2,<25
+beautifulsoup4>=4.12,<5
+certifi>=2024.2.2,<2026
+lxml>=5.0,<6
 
-# Web scanning
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-selenium>=4.15.0
-requests-html>=0.10.0
+# Configuration, CLI, logging, and API
+PyYAML>=6.0,<7
+colorama>=0.4.6,<1
+click>=8.1,<9
+loguru>=0.7,<1
+Flask>=3.0,<4
 
-# SSL/TLS testing
-pyOpenSSL>=23.3.0
-cryptography>=41.0.0
-sslyze>=5.2.0
+# Web platform upgrade: background jobs, API, and persistence
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.8,<3
+SQLAlchemy>=2.0,<3
+alembic>=1.13,<2
+redis>=5.0,<6
+celery>=5.4,<6
+python-multipart>=0.0.9,<1
 
-# Vulnerability databases
-cvss>=2.6
-python-nvd3>=0.15.0
+# Reports and machine-readable output
+Jinja2>=3.1,<4
+Markdown>=3.7,<4
+orjson>=3.10,<4
+reportlab>=4.0,<5
 
-# Subdomain enumeration
-# Note: sublist3r and subfinder are not available on PyPI or have version issues
-# These tools can be installed separately if needed
+# DNS/TLS metadata and risk scoring
+dnspython>=2.6,<3
+cryptography>=43,<46
+cvss>=3.1,<4
 
-# Reporting
-jinja2>=3.1.0
-markdown>=3.5.0
-weasyprint>=60.0
-matplotlib>=3.8.0
-plotly>=5.18.0
-
-# Utilities
-colorama>=0.4.6
-termcolor>=2.3.0
-tqdm>=4.66.0
-pyyaml>=6.0.1
-python-dotenv>=1.0.0
-click>=8.1.7
-
-# Database
-sqlalchemy>=2.0.0
-alembic>=1.13.0
-
-# API
-fastapi>=0.105.0
-uvicorn>=0.25.0
-pydantic>=2.5.0
-
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-cov>=4.1.0
-
-# Code quality
-black>=23.12.0
-flake8>=6.1.0
-mypy>=1.7.0
-
-# Security
-python-magic>=0.4.27
-# hashlib is a built-in Python module, not needed in requirements
-
-# Data processing
-pandas>=2.1.0
-numpy>=1.26.0
-
-# Logging
-loguru>=0.7.0
-
-# Rate limiting
-aiolimiter>=1.1.0
-
-# Proxy support
-requests[socks]>=2.31.0
-aiohttp-socks>=0.8.0
+# Development and verification
+pytest>=8,<9
+pytest-asyncio>=0.23,<1
+pytest-cov>=5,<7
+ruff>=0.6,<1
+mypy>=1.11,<2

@@ -35,6 +35,12 @@ class WAFDetector:
         self.config = config
         self.logger = logger
         self.timeout = config.get('scanning', {}).get('timeout', 10)
+
+    def _ssl_context(self):
+        """Use trusted TLS by default; allow bypass only by explicit flag."""
+        if self.config.get('scanning', {}).get('insecure_tls', False):
+            return False
+        return ssl.create_default_context(cafile=certifi.where())
     
     async def detect(self, target: str) -> Dict[str, Any]:
         """Detect if target is protected by a WAF"""
@@ -78,9 +84,7 @@ class WAFDetector:
     async def _check_headers(self, target: str) -> Optional[str]:
         """Check response headers for WAF signatures"""
         try:
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            ssl_context = self._ssl_context()
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -109,9 +113,7 @@ class WAFDetector:
     async def _check_behavior(self, target: str) -> Optional[Dict[str, Any]]:
         """Check WAF behavior by sending test payloads"""
         try:
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            ssl_context = self._ssl_context()
             
             # Get baseline response
             async with aiohttp.ClientSession() as session:
