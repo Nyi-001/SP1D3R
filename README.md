@@ -8,8 +8,6 @@ produces reader-friendly HTML, PDF, and JSON reports.
 <p align="center">
   <img src="sp1d3r.png" alt="SP1D3R logo" width="360">
 </p>
-
-```text
 ██████╗  ██████╗  ██╗  ██████╗  ██████╗  ██████╗
 ██╔════╝ ██╔══██╗ ██║ ██╔══██╗ ╚════██╗ ██╔══██╗
 ██║      ██║  ██║ ██║ ██║  ██║  █████╔╝ ██║  ██║
@@ -20,7 +18,7 @@ produces reader-friendly HTML, PDF, and JSON reports.
 
  SPID3R — Web Security Testing Assistant
  Authorized testing only
-```
+
 
 Captured request files are intentionally excluded from version control because
 they can contain session cookies or bearer tokens.
