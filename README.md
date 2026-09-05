@@ -14,7 +14,6 @@ External tool profiles can be selected explicitly. The recon adapters are based 
 
 ```bash
 python main.py --target https://lab.example.test \
-  --allow lab.example.test \
   --active \
   --tool subfinder --tool httpx --tool nuclei --tool wpscan
 ```
@@ -27,11 +26,11 @@ Recon examples:
 
 ```bash
 # Passive subdomain/DNS/domain and HTTP fingerprinting
-python main.py --target https://lab.example.test --allow lab.example.test \
+python main.py --target https://lab.example.test \
   --tool subfinder --tool amass --tool dnsx --tool whois --tool httpx --tool whatweb
 
 # Explicit active service/content audit against an authorized lab
-python main.py --target https://lab.example.test --allow lab.example.test --active \
+python main.py --target https://lab.example.test --active \
   --wordlist wordlists/content.txt --tool nmap --tool dirb --tool nikto
 ```
 
@@ -157,7 +156,7 @@ python main.py --target https://example.com --scan-type quick
 docker build -t pentest-tool .
 
 # Run container
-docker run -it pentest-tool --target https://example.com --allow example.com
+docker run -it pentest-tool --target https://example.com
 
 # Using docker-compose
 docker-compose up
@@ -188,22 +187,22 @@ python main.py --target https://example.com --output-format html --output report
 
 ```bash
 # Subdomain enumeration
-python main.py --target https://example.com --allow example.com --module subdomain --wordlist subdomains.txt
+python main.py --target https://example.com --module subdomain --wordlist subdomains.txt
 
 # Port scanning with custom range
-python main.py --target https://example.com --allow example.com --module port --ports 1-10000 --threads 100
+python main.py --target https://example.com --module port --ports 1-10000 --threads 100
 
 # Vulnerability scanning
-python main.py --target https://example.com --allow example.com --module vuln --cve-check
+python main.py --target https://example.com --module vuln --cve-check
 
 # Web application testing
-python main.py --target https://example.com --allow example.com --module web --active --test-sqli --test-xss
+python main.py --target https://example.com --module web --active --test-sqli --test-xss
 
 # Replay a Burp Suite request and test its captured parameters in an authorized lab
 python main.py --active --all-tests --request-file burp_request.txt --verbose
 
 # Stealth mode with rate limiting
-python main.py --target https://example.com --allow example.com --stealth --rate-limit 10
+python main.py --target https://example.com --stealth --rate-limit 10
 ```
 
 ### API Usage
