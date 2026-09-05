@@ -30,10 +30,10 @@ def parse_arguments():
         epilog="""
 Examples:
   %(prog)s --target https://example.com --scan-type quick
-  %(prog)s --target https://example.com --allow example.com --module subdomain --wordlist subs.txt
+  %(prog)s --target https://example.com --module subdomain --wordlist subs.txt
   %(prog)s --target https://example.com --scan-type deep --output report.pdf
-  %(prog)s --target https://example.com --allow example.com --active --tool nuclei --tool wpscan
-  %(prog)s --target https://lab.example.test --allow lab.example.test --active --all-tests
+  %(prog)s --target https://example.com --active --tool nuclei --tool wpscan
+  %(prog)s --target https://lab.example.test --active --all-tests
   %(prog)s --active --all-tests --request-file burp_request.txt
   %(prog)s --target-list targets.txt --allow '*.example.com' --scan-type standard --threads 100
         """

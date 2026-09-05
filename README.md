@@ -168,20 +168,20 @@ docker-compose up
 ### Basic Scanning
 
 ```bash
-# Quick scan (ports + basic enum)
-python main.py --target https://example.com --allow example.com --scan-type quick
+# Quick scan (ports + basic enum; scope defaults to example.com)
+python main.py --target https://example.com --scan-type quick
 
 # Standard scan (comprehensive)
-python main.py --target https://example.com --allow example.com --scan-type standard
+python main.py --target https://example.com --scan-type standard
 
 # Deep scan (all modules)
-python main.py --target https://example.com --allow example.com --scan-type deep --output report.pdf
+python main.py --target https://example.com --scan-type deep --output report.pdf
 
 # PDF is the default report format; choose the output path explicitly if desired
-python main.py --target https://example.com --allow example.com --scan-type standard --output reports/security-assessment.pdf
+python main.py --target https://example.com --scan-type standard --output reports/security-assessment.pdf
 
 # Interactive HTML alternative
-python main.py --target https://example.com --allow example.com --output-format html --output reports/security-assessment.html
+python main.py --target https://example.com --output-format html --output reports/security-assessment.html
 ```
 
 ### Advanced Options
