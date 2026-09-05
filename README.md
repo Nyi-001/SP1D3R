@@ -6,7 +6,7 @@ normalizes discovery-tool output, performs bounded active verification, and
 produces reader-friendly HTML, PDF, and JSON reports.
 
 <p align="center">
-  <img src="images/spider.png" alt="SP1D3R logo" width="360">
+  <img src="images/spider.png" alt="SP1D3R logo" width="900">
 </p>
 
 ```text
