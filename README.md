@@ -5,6 +5,19 @@ laboratories and internal testing. It classifies the target before testing,
 normalizes discovery-tool output, performs bounded active verification, and
 produces reader-friendly HTML, PDF, and JSON reports.
 
+```text
+██████╗  ██████╗  ██╗  ██████╗  ██████╗  ██████╗
+██╔════╝ ██╔══██╗ ██║ ██╔══██╗ ╚════██╗ ██╔══██╗
+██║      ██║  ██║ ██║ ██║  ██║  █████╔╝ ██║  ██║
+╚█████╗  ██████╔╝ ██║ ██║  ██║  ╚═══██╗ ██████╔╝
+ ╚═══██╗ ██╔═══╝  ██║ ██║  ██║      ██║ ██╔══██╗
+██████╔╝ ██║      ██║ ██████╔╝ ██████╔╝ ██║  ██║
+╚═════╝  ╚═╝      ╚═╝ ╚═════╝  ╚═════╝  ╚═╝  ╚═╝
+
+ SPID3R — Web Security Testing Assistant
+ Authorized testing only
+```
+
 Captured request files are intentionally excluded from version control because
 they can contain session cookies or bearer tokens.
 
