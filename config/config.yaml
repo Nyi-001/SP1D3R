@@ -17,6 +17,9 @@ scanning:
 # technology and service discovery. Matches are suggestions, not confirmed
 # vulnerabilities; extend this catalog with reviewed vendor advisories.
 cve_catalog: "data/cve_catalog.json"
+# Online enrichment is enabled only with --cve-check. Results remain
+# suggestions until the exact package/build is verified.
+cve_cache_dir: "reports/.cve-cache"
 
 scope:
   allowed_hosts: []

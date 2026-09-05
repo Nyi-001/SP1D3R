@@ -33,7 +33,10 @@ class PentestScanner:
         self.port_scanner = PortScanner(config, logger)
         self.subdomain_enum = SubdomainEnumerator(config, logger)
         self.vuln_scanner = VulnerabilityScanner(config, logger)
-        self.cve_matcher = CVESuggestionMatcher(config.get('cve_catalog'))
+        self.cve_matcher = CVESuggestionMatcher(
+            config.get('cve_catalog'),
+            config.get('cve_cache_dir'),
+        )
         self.web_scanner = WebScanner(config, logger)
         self.dns_analyzer = DNSAnalyzer(config, logger)
         self.ssl_tester = SSLTester(config, logger)
@@ -206,7 +209,7 @@ class PentestScanner:
         # Correlate the verified technology and service observations after
         # discovery has completed. These are suggestions, not confirmed
         # vulnerabilities, because banners can be spoofed or vendor-patched.
-        self._run_cve_suggestions()
+        self._run_cve_suggestions(bool(params.get('cve_check', False)))
         
         # Finalize results
         self.results['scan_info']['end_time'] = datetime.now().isoformat()
@@ -594,8 +597,8 @@ class PentestScanner:
         except Exception as e:
             self.logger.error(f"[!] Vulnerability scanning error: {e}")
 
-    def _run_cve_suggestions(self) -> None:
-        """Match discovered versions against the local CVE suggestion catalog."""
+    def _run_cve_suggestions(self, online: bool = False) -> None:
+        """Match discovered versions locally and optionally enrich from NVD."""
         target = self.results.get('target', {})
         technologies = target.get('technologies', [])
         ports = list(target.get('ports', []) or [])
@@ -614,7 +617,13 @@ class PentestScanner:
                     'service': product,
                     'banner': f"{product} {version}",
                 })
-        suggestions = self.cve_matcher.match(technologies, ports)
+        if online:
+            self.logger.info("[*] Querying NVD for version-based CVE suggestions...")
+            suggestions = self.cve_matcher.enrich(technologies, ports, sources=('local', 'nvd'))
+            for error in self.cve_matcher.lookup_errors:
+                self.logger.warning(f"[!] CVE lookup skipped: {error}")
+        else:
+            suggestions = self.cve_matcher.match(technologies, ports)
         target['cve_suggestions'] = suggestions
         if suggestions:
             self.logger.info(f"[+] Matched {len(suggestions)} possible CVE(s) from discovered versions")

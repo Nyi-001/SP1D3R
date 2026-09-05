@@ -1,0 +1,76 @@
+[
+  {
+    "cve": "CVE-2021-41773",
+    "product": "Apache HTTP Server",
+    "aliases": ["apache", "httpd", "apache httpd"],
+    "affected": [{"exact": "2.4.49"}],
+    "severity": "high",
+    "cvss": "7.5",
+    "summary": "Path traversal and file disclosure in Apache HTTP Server 2.4.49.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2021-41773"
+  },
+  {
+    "cve": "CVE-2021-42013",
+    "product": "Apache HTTP Server",
+    "aliases": ["apache", "httpd", "apache httpd"],
+    "affected": [{"exact": "2.4.50"}],
+    "severity": "critical",
+    "cvss": "9.8",
+    "summary": "Path traversal and possible remote code execution in Apache HTTP Server 2.4.50.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2021-42013"
+  },
+  {
+    "cve": "CVE-2021-23017",
+    "product": "nginx",
+    "aliases": ["nginx"],
+    "affected": [{"min": "0.6.18", "max": "1.20.0"}],
+    "severity": "high",
+    "cvss": "7.5",
+    "summary": "A DNS resolver vulnerability in nginx can cause a one-byte memory overwrite.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2021-23017"
+  },
+  {
+    "cve": "CVE-2024-6387",
+    "product": "OpenSSH",
+    "aliases": ["openssh", "ssh"],
+    "affected": [{"min": "8.5", "max": "9.7"}],
+    "severity": "high",
+    "cvss": "8.1",
+    "summary": "The regreSSHion signal-handler race condition affects specific portable OpenSSH versions.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2024-6387"
+  },
+  {
+    "cve": "CVE-2011-2523",
+    "product": "vsftpd",
+    "aliases": ["vsftpd", "ftp"],
+    "affected": [{"exact": "2.3.4"}],
+    "severity": "critical",
+    "cvss": "10.0",
+    "summary": "A malicious backdoor was distributed in the vsftpd 2.3.4 source archive.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2011-2523"
+  },
+  {
+    "cve": "CVE-2020-1938",
+    "product": "Apache Tomcat",
+    "aliases": ["tomcat", "apache tomcat"],
+    "affected": [
+      {"min": "7.0.0", "max": "7.0.99"},
+      {"min": "8.5.0", "max": "8.5.50"},
+      {"min": "9.0.0", "max": "9.0.30"}
+    ],
+    "severity": "high",
+    "cvss": "9.8",
+    "summary": "The AJP connector may allow unauthenticated file read or inclusion when exposed and misconfigured.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2020-1938"
+  },
+  {
+    "cve": "CVE-2022-21661",
+    "product": "WordPress",
+    "aliases": ["wordpress", "wp"],
+    "affected": [{"min": "0.0.0", "max": "5.8.2"}],
+    "severity": "high",
+    "cvss": "8.0",
+    "summary": "A SQL injection issue affects vulnerable WordPress versions through the WP-Query interface.",
+    "reference": "https://nvd.nist.gov/vuln/detail/CVE-2022-21661"
+  }
+]

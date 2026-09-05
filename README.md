@@ -51,7 +51,7 @@ The request file may contain an absolute or relative request target, cookies, au
 
 The default output is a print-ready PDF security assessment report saved under `reports/`. It includes a cover page, executive summary, severity dashboard, scope and methodology, coverage, findings with evidence and remediation, attack-surface review, technology/services inventory, directory results, version-based CVE suggestions, tool status, and assessment notes. HTML remains available with `--output-format html` for interactive findings search and filters; JSON is available with `--output-format json`.
 
-After fingerprinting and port discovery, SPID3R automatically matches verified product/version observations and Nmap service versions against the editable `data/cve_catalog.json`. These entries are reported as `suggested` CVE matches—not confirmed vulnerabilities—because banners may be spoofed and distributions may backport fixes. Confirm the exact package build and vendor advisory before remediation or exploitation decisions.
+After fingerprinting and port discovery, SPID3R automatically matches verified product/version observations and Nmap service versions against the editable `data/cve_catalog.json`. Use `--cve-check` to additionally query the public NVD CVE API using generated CPEs; responses are cached under `reports/.cve-cache/`. Online entries are reported as `suggested` CVE matches—not confirmed vulnerabilities—because banners may be spoofed and distributions may backport fixes. Set `NVD_API_KEY` in your shell for higher API limits. Confirm the exact package build and vendor advisory before remediation or exploitation decisions.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)

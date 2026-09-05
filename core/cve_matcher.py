@@ -9,7 +9,13 @@ CVE as exploitable.
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -20,10 +26,119 @@ VERSION_RE = re.compile(r"(?<!\d)(\d+\.\d+(?:\.\d+)?(?:p\d+)?)(?!\d)", re.IGNORE
 class CVESuggestionMatcher:
     """Match observed product versions against a small editable CVE catalog."""
 
-    def __init__(self, catalog_path: Optional[str] = None):
+    def __init__(self, catalog_path: Optional[str] = None, cache_dir: Optional[str] = None):
         default_path = Path(__file__).resolve().parent.parent / "data" / "cve_catalog.json"
         self.catalog_path = Path(catalog_path) if catalog_path else default_path
+        self.cache_dir = Path(cache_dir or os.getenv("SP1D3R_CVE_CACHE", "reports/.cve-cache"))
         self.catalog = self._load_catalog()
+        self.lookup_errors: List[str] = []
+
+    def enrich(
+        self,
+        technologies: Iterable[Dict[str, Any]] = (),
+        ports: Iterable[Dict[str, Any]] = (),
+        sources: Iterable[str] = ("local", "nvd"),
+    ) -> List[Dict[str, Any]]:
+        """Return local and optional online CVE suggestions.
+
+        Online matches are deliberately marked as suggestions. A remotely
+        observed version is not proof of the installed package or of
+        exploitability, especially behind a reverse proxy or vendor backport.
+        """
+        self.lookup_errors = []
+        observations = self._technology_observations(technologies)
+        observations.extend(self._port_observations(ports))
+        source_set = {str(source).lower() for source in sources}
+        results = self.match(technologies, ports) if "local" in source_set else []
+        seen = {(item.get("cve"), item.get("detected_product"), item.get("detected_version")) for item in results}
+        if "nvd" in source_set:
+            for observation in observations:
+                for item in self._query_nvd(observation):
+                    key = (item.get("cve"), item.get("detected_product"), item.get("detected_version"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    results.append(item)
+        return sorted(results, key=lambda item: (self._severity_rank(item.get("severity")), item.get("cve", "")), reverse=True)
+
+    def _query_nvd(self, observation: Dict[str, Any]) -> List[Dict[str, Any]]:
+        cpe = self._cpe_for(observation["product"], observation["version"])
+        if not cpe:
+            return []
+        try:
+            payload = self._get_json("https://services.nvd.nist.gov/rest/json/cves/2.0", {"cpeName": cpe}, "nvd")
+        except (OSError, ValueError) as exc:
+            self.lookup_errors.append(f"{observation['product']} {observation['version']}: {exc}")
+            return []
+        suggestions = []
+        for wrapper in payload.get("vulnerabilities", []) if isinstance(payload, dict) else []:
+            cve_data = wrapper.get("cve", {}) if isinstance(wrapper, dict) else {}
+            cve_id = cve_data.get("id")
+            if not cve_id:
+                continue
+            description = next((str(item.get("value", "")) for item in cve_data.get("descriptions", []) if item.get("lang") == "en"), "NVD CVE record matched the observed CPE.")
+            severity, cvss = self._cvss(cve_data)
+            references = [str(item.get("url")) for item in cve_data.get("references", []) if item.get("url")][:5]
+            suggestions.append({
+                "cve": cve_id, "title": f"Possible {cve_id} exposure in {observation['product']}",
+                "product": observation["product"], "detected_product": observation["product"],
+                "detected_version": observation["version"], "severity": severity, "cvss": cvss,
+                "state": "suggested", "confidence": "medium", "summary": description,
+                "reference": references[0] if references else f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                "references": references, "affected_range": f"CPE matched {cpe}",
+                "sources": [observation["source"], "NVD"], "ports": [observation["port"]] if observation.get("port") else [],
+                "evidence": [observation["evidence"], f"CPE query: {cpe}"],
+                "recommendation": "Confirm the exact package build and vendor backports, then follow the vendor advisory before remediation decisions.",
+            })
+        return suggestions
+
+    def _get_json(self, base_url: str, params: Dict[str, str], source: str) -> Dict[str, Any]:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        key = hashlib.sha256((base_url + "?" + urlencode(params)).encode()).hexdigest()
+        cache_path = self.cache_dir / f"{source}_{key}.json"
+        if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 86400:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        headers = {"User-Agent": "SP1D3R-CVE-Enrichment/1.0", "Accept": "application/json"}
+        if os.getenv("NVD_API_KEY") and source == "nvd":
+            headers["apiKey"] = os.environ["NVD_API_KEY"]
+        request = Request(base_url + "?" + urlencode(params), headers=headers)
+        try:
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            if exc.code == 429:
+                raise OSError("NVD rate limit reached; set NVD_API_KEY or retry later") from exc
+            raise OSError(f"NVD returned HTTP {exc.code}") from exc
+        except (URLError, TimeoutError) as exc:
+            raise OSError(f"NVD request failed: {exc}") from exc
+        cache_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    @staticmethod
+    def _cpe_for(product: str, version: str) -> str:
+        mapping = {
+            "apache": "apache:http_server", "nginx": "nginx:nginx", "openssh": "openbsd:openssh",
+            "vsftpd": "vsftpd:vsftpd", "apache tomcat": "apache:tomcat", "wordpress": "wordpress:wordpress",
+        }
+        pair = mapping.get(product)
+        if not pair or not version:
+            return ""
+        vendor, name = pair.split(":", 1)
+        return f"cpe:2.3:a:{vendor}:{name}:{version}:*:*:*:*:*:*:*"
+
+    @staticmethod
+    def _cvss(cve_data: Dict[str, Any]) -> Tuple[str, str]:
+        metrics = cve_data.get("metrics", {})
+        for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+            entries = metrics.get(key) or []
+            if entries:
+                metric = entries[0].get("cvssData", {})
+                return str(metric.get("baseSeverity", "info")).lower(), str(metric.get("baseScore", ""))
+        return "info", ""
+
+    @staticmethod
+    def _severity_rank(value: Any) -> int:
+        return {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}.get(str(value).lower(), 0)
 
     def _load_catalog(self) -> List[Dict[str, Any]]:
         try:

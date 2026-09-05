@@ -43,6 +43,10 @@ reports/*/
 *.pdf
 *.json
 
+# Keep the reviewed local CVE catalog in the repository; runtime cache stays ignored.
+!data/
+!data/cve_catalog.json
+
 # Captured requests may contain cookies, bearer tokens, or other secrets.
 api.txt
 request.txt
