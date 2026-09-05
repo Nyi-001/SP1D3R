@@ -10,7 +10,9 @@ aiodns>=3.2,<4
 aiofiles>=23.2,<25
 beautifulsoup4>=4.12,<5
 certifi>=2024.2.2,<2026
-lxml>=5.0,<6
+# lxml 5.x may fall back to an incompatible source build on Python 3.14.
+# lxml 6.x provides Python 3.14-compatible distributions.
+lxml>=6.0,<7
 
 # Configuration, CLI, logging, and API
 PyYAML>=6.0,<7
