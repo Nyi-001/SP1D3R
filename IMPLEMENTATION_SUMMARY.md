@@ -355,7 +355,7 @@ The tool is now fully functional and ready for use in authorized penetration tes
 
 ---
 
-**Author**: Pangerkumzuk Longkumer  
-**Organization**: NEXUSCIPHERGUARD INDIA  
+**Author**: Nyi-001  
+**Contributors**: Nyi-001, Claude Code  
 **License**: MIT  
 **Version**: 1.0.0

@@ -326,8 +326,8 @@ For issues, feature requests, or contributions:
 
 ---
 
-**Author**: Pangerkumzuk Longkumer
-**Organization**: NEXUSCIPHERGUARD INDIA
+**Author**: Nyi-001
+**Contributors**: Nyi-001, Claude Code
 **License**: MIT
 **Status Date**: 2026-02-17
 **Verification**: Complete ✅

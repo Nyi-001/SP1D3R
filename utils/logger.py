@@ -44,13 +44,12 @@ class TerminalFormatter(logging.Formatter):
         return f"{color}{rendered}{Style.RESET_ALL}"
 
 SP1D3R_WORDMARK = r"""
-██████╗  ██████╗  ██╗  ██████╗  ██████╗  ██████╗
-██╔════╝ ██╔══██╗ ██║ ██╔══██╗ ╚════██╗ ██╔══██╗
-██║      ██║  ██║ ██║ ██║  ██║  █████╔╝ ██║  ██║
-╚█████╗  ██████╔╝ ██║ ██║  ██║  ╚═══██╗ ██████╔╝
- ╚═══██╗ ██╔═══╝  ██║ ██║  ██║      ██║ ██╔══██╗
-██████╔╝ ██║      ██║ ██████╔╝ ██████╔╝ ██║  ██║
-╚═════╝  ╚═╝      ╚═╝ ╚═════╝  ╚═════╝  ╚═╝  ╚═╝
+███████╗██████╗  ██╗██████╗ ██████╗ ██████╗
+██╔════╝██╔══██╗███║██╔══██╗╚════██╗██╔══██╗
+███████╗██████╔╝╚██║██║  ██║ █████╔╝██████╔╝
+╚════██║██╔═══╝  ██║██║  ██║ ╚═══██╗██╔══██╗
+███████║██║      ██║██████╔╝██████╔╝██║  ██║
+╚══════╝╚═╝      ╚═╝╚═════╝ ╚═════╝ ╚═╝  ╚═╝
 """
 
 SPIDER_ART = r"""
@@ -115,5 +114,5 @@ def setup_logger(verbose: bool = False) -> logging.Logger:
 
 def log_banner():
     print(f"{Fore.RED}{Style.BRIGHT}{SP1D3R_WORDMARK}{Style.RESET_ALL}")
-    print(f"{Fore.RED}{Style.BRIGHT} SPID3R — Web Security Testing Assistant{Style.RESET_ALL}")
+    print(f"{Fore.RED}{Style.BRIGHT} SP1D3R — Web Security Testing Assistant{Style.RESET_ALL}")
     print(f"{Fore.YELLOW} Authorized testing only{Style.RESET_ALL}\n")

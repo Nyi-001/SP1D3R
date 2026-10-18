@@ -164,7 +164,7 @@ def test_large_payload_collections_are_bounded() -> None:
     assert len(payloads) == 3
 
 
-def test_sqli_active_probes_use_comments_and_not_a_lone_quote() -> None:
+def test_sqli_probe_plan_prepends_a_lone_quote_to_comment_probes() -> None:
     scanner = WebScanner(
         {
             "scope": {"allowed_hosts": ["example.test"]},
@@ -177,6 +177,176 @@ def test_sqli_active_probes_use_comments_and_not_a_lone_quote() -> None:
     assert all("'" not in probe or any(marker in probe for marker in ("--", "#", "/*")) for probe in probes)
     assert all(probe != "'" for probe in probes)
     assert any("-- -" in probe for probe in probes)
+
+    calls = []
+
+    async def probe(value, phase):
+        calls.append((phase, value))
+        return {"status": 200, "text": "", "url": "http://example.test"}
+
+    asyncio.run(scanner._run_sqli_probes(probe, "id", "http://example.test", "GET", "1"))
+    assert calls[0][0] == "sqli-baseline"
+    error_values = [value for phase, value in calls if phase == "sqli-error"]
+    assert error_values[0] == "'"
+
+
+def test_sqli_status_delta_raises_confirmed_critical() -> None:
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {"payload_limit": 8}},
+        DummyLogger(),
+    )
+
+    async def probe(value, phase):
+        if phase == "sqli-baseline":
+            return {"status": 200, "text": "ok page", "url": "http://example.test"}
+        if value == "'":
+            return {"status": 500, "text": "SELECT first_name FROM users WHERE id = '''", "url": "http://example.test"}
+        return {"status": 200, "text": "ok page", "url": "http://example.test"}
+
+    asyncio.run(scanner._run_sqli_probes(probe, "id", "http://example.test", "GET", "1"))
+    sqli = [f for f in scanner.findings if f["type"] == "SQL Injection"]
+    assert sqli, "expected a SQL injection finding"
+    assert sqli[0]["severity"] == "critical"
+    assert sqli[0]["state"] == "confirmed"
+    assert sqli[0]["verification"]["baseline_status"] == 200
+    assert sqli[0]["verification"]["probe_status"] == 500
+
+
+def test_sqli_status_delta_ignores_404_router_misses() -> None:
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {"payload_limit": 8}},
+        DummyLogger(),
+    )
+
+    async def probe(value, phase):
+        if phase == "sqli-baseline":
+            return {"status": 200, "text": "ok page", "url": "http://example.test"}
+        if value == "'":
+            return {"status": 404, "text": "not found", "url": "http://example.test"}
+        return {"status": 404, "text": "not found", "url": "http://example.test"}
+
+    asyncio.run(scanner._run_sqli_probes(probe, "path:thing", "http://example.test", "GET", "thing"))
+    sqli = [f for f in scanner.findings if f["type"] == "SQL Injection"]
+    assert not sqli
+
+
+def test_sqli_time_based_detection(monkeypatch) -> None:
+    import core.web_scanner as web_scanner_module
+
+    class FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+    clock = FakeClock()
+    monkeypatch.setattr(web_scanner_module, "time", clock)
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {"payload_limit": 8}},
+        DummyLogger(),
+    )
+
+    async def probe(value, phase):
+        if phase == "sqli-time":
+            clock.now += 3.0
+        return {"status": 200, "text": "ok page", "url": "http://example.test"}
+
+    asyncio.run(scanner._run_sqli_probes(probe, "id", "http://example.test", "GET", "1"))
+    sqli = [f for f in scanner.findings if f["type"] == "SQL Injection"]
+    assert sqli and sqli[0]["title"].startswith("Time-based blind SQL injection")
+    assert sqli[0]["state"] == "confirmed"
+
+
+def test_path_param_candidates_skip_static_segments() -> None:
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {}},
+        DummyLogger(),
+    )
+    pages = [
+        "http://example.test/users/v1/name1",
+        "http://example.test/books/v1/The%20Great",
+        "http://example.test/static/js/app.js",
+        "http://example.test/login.php",
+        "http://example.test/docs/",
+    ]
+    segments = [segment for _, _, segment in scanner._path_param_candidates(pages)]
+    assert "name1" in segments
+    assert "The%20Great" in segments
+    assert not any(
+        seg in {"users", "v1", "books", "static", "js", "app.js", "login.php", "docs"}
+        for seg in segments
+    )
+
+
+def test_settings_forms_are_excluded_from_active_testing() -> None:
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {}},
+        DummyLogger(),
+    )
+    assert scanner._is_settings_form({"url": "http://example.test/security.php", "inputs": []})
+    assert scanner._is_settings_form(
+        {"url": "http://example.test/anything", "inputs": [{"name": "user_token", "type": "hidden"}]}
+    )
+    assert scanner._is_settings_form(
+        {"url": "http://example.test/setup.php", "inputs": [{"name": "create_db", "type": "submit"}]}
+    )
+    assert not scanner._is_settings_form(
+        {"url": "http://example.test/search", "inputs": [{"name": "q", "type": "text"}]}
+    )
+
+
+def test_finding_dedup_by_type_parameter_and_endpoint() -> None:
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {}},
+        DummyLogger(),
+    )
+    scanner.findings.append({
+        "type": "File Inclusion / LFI",
+        "parameter": "page",
+        "location": "http://example.test/fi/?page=file1.php",
+    })
+    assert scanner._already_reported(
+        "File Inclusion / LFI", "page", "http://example.test/fi/?page=file2.php"
+    )
+    assert not scanner._already_reported(
+        "File Inclusion / LFI", "page", "http://example.test/other/?page=file1.php"
+    )
+    assert not scanner._already_reported(
+        "File Inclusion / LFI", "file", "http://example.test/fi/?file=x"
+    )
+    assert not scanner._already_reported(
+        "Directory Traversal", "page", "http://example.test/fi/?page=file1.php"
+    )
+
+
+def test_csrf_flags_state_changing_get_forms_only() -> None:
+    scanner = WebScanner(
+        {"scope": {"allowed_hosts": ["example.test"]}, "scanning": {}},
+        DummyLogger(),
+    )
+    forms = [
+        {
+            "method": "get",
+            "url": "http://example.test/csrf",
+            "page": "http://example.test/csrf",
+            "inputs": [
+                {"name": "password_new", "type": "password"},
+                {"name": "password_conf", "type": "password"},
+            ],
+        },
+        {
+            "method": "get",
+            "url": "http://example.test/search",
+            "page": "http://example.test/search",
+            "inputs": [{"name": "q", "type": "text"}],
+        },
+    ]
+    asyncio.run(scanner._test_csrf("http://example.test", {"forms": forms}))
+    csrf = [f for f in scanner.findings if f["type"] == "CSRF"]
+    assert len(csrf) == 1
+    assert csrf[0]["location"] == "http://example.test/csrf"
+    assert csrf[0]["method"] == "GET"
 
 
 def test_named_candidate_probe_preserves_post_method_and_body() -> None:
