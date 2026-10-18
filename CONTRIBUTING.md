@@ -2,6 +2,11 @@
 
 Thank you for your interest in contributing to this project! This document provides guidelines for contributing.
 
+## Contributors
+
+- **Nyi-001** — developer and maintainer
+- **Claude Code** — co-developer (AI pair-programming assistant)
+
 ## Code of Conduct
 
 - Be respectful and inclusive

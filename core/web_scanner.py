@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, List, Set
-from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunsplit
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunsplit, quote
 from bs4 import BeautifulSoup
 from core.scope import ScopePolicy, normalize_url
 from core.attack_surface import build_attack_surface
@@ -40,6 +40,51 @@ class WebScanner:
         "<iframe src='javascript:alert(\"XSS\")'></iframe>",
         "'><script>alert(String.fromCharCode(88,83,83))</script>",
     ]
+
+    # Bounded payload matrix for reflection checks; the first payload that is
+    # reflected unescaped is reported with its context.
+    XSS_PAYLOAD_MATRIX = [
+        "<script>alert('XSS')</script>",
+        "<img src=x onerror=alert('XSS')>",
+        "\"><svg/onload=alert('XSS')>",
+        "';alert('XSS')//",
+    ]
+
+    # SQL time probe; the delay must exceed the decision threshold below.
+    SQLI_TIME_PAYLOAD = "' AND SLEEP(3)-- -"
+    SQLI_TIME_THRESHOLD_SECONDS = 2.5
+
+    # Path segments that are route words, not resource identifiers. Segments
+    # outside this stoplist in crawled URLs become fuzzable path parameters.
+    PATH_STATIC_SEGMENTS = {
+        'api', 'v1', 'v2', 'v3', 'v4', 'users', 'user', 'books', 'book',
+        'auth', 'login', 'logout', 'signin', 'signup', 'register', 'admin',
+        'items', 'orders', 'posts', 'comments', 'search', 'index', 'home',
+        'me', 'products', 'shop', 'cart', 'profile', 'account', 'upload',
+        'files', 'images', 'img', 'css', 'js', 'static', 'assets', 'docs',
+        'help', 'about', 'contact', 'tags', 'categories', 'vulnerabilities',
+        'external', 'config', 'dvwa',
+    }
+
+    # Forms that configure the application or the session must never receive
+    # attack payloads: a valid captured token can make the probe *succeed* and
+    # mutate settings (observed on DVWA security.php, which maps any unknown
+    # posted value to 'impossible').
+    SETTINGS_FORM_FIELDS = {
+        'security', 'seclev_submit', 'config', 'settings', 'is_admin',
+        'role', 'permissions', 'create_db', 'drop_db', 'reset_db', 'reset',
+        'user_token', 'session_token', 'csrf_token',
+    }
+    SETTINGS_FORM_PATHS = ('/security', '/settings', '/config', '/admin', '/setup')
+
+    # Field-name patterns that suggest a form changes state; used to decide
+    # whether a GET form without a token is a CSRF finding.
+    STATE_CHANGING_FIELD_RE = re.compile(
+        r'(password|passwd|pwd|email|delete|remove|update|change|edit|create|'
+        r'settings|config|role|amount|transfer|pay|order|subscribe)',
+        re.IGNORECASE,
+    )
+
     
     # Common vulnerable parameters
     COMMON_PARAMS = [
@@ -143,6 +188,9 @@ class WebScanner:
         self.api_docs: List[str] = []
         self.js_urls: List[str] = []
         self._analyzed_js: Set[str] = set()
+        self.skipped_forms: List[Dict[str, Any]] = []
+        self._token_refreshed: Set[tuple] = set()
+        self._target_root_text: str | None = None
         scope_config = config.get('scope', {})
         self.scope = ScopePolicy(scope_config.get('allowed_hosts', []), scope_config.get('excluded_paths', []))
         self.verifier = VerificationEngine()
@@ -323,6 +371,9 @@ class WebScanner:
         self.api_docs = []
         self.js_urls = []
         self._analyzed_js = set()
+        self.skipped_forms = []
+        self._token_refreshed = set()
+        self._target_root_text = None
 
         self.request_headers = {}
         if request_spec:
@@ -384,9 +435,30 @@ class WebScanner:
                 'method': request_spec.get('method', ''),
                 'url': request_spec.get('url', ''),
             }
-        
+
+        # Settings/config forms must never receive attack payloads: with a
+        # valid captured token a probe can actually change application state.
+        active_forms = []
+        for form in pages_and_forms.get('forms', []):
+            if self._is_settings_form(form):
+                self.skipped_forms.append({
+                    'url': form.get('url', ''),
+                    'method': form.get('method', 'get').lower(),
+                    'reason': 'settings/configuration form excluded from active testing',
+                })
+                continue
+            active_forms.append(form)
+        pages_and_forms['forms'] = active_forms
+        if self.skipped_forms:
+            self.logger.warning(
+                f"[!] Excluded {len(self.skipped_forms)} settings/configuration form(s) "
+                "from active testing to avoid mutating application state"
+            )
+
         # Run optional vulnerability tests
         active_checks = self.config.get('scope', {}).get('active_checks', False)
+        if active_checks:
+            await self._refresh_form_tokens(pages_and_forms.get('forms', []))
 
         all_active_tests = bool(self.config.get('scanning', {}).get('all_active_tests', False))
 
@@ -473,6 +545,7 @@ class WebScanner:
                 'auth_state': pages_and_forms.get('auth_state', 'unknown'),
                 'auth_gate_urls': pages_and_forms.get('auth_gate_urls', []),
                 'request_seed': pages_and_forms.get('request_seed', {}),
+                'skipped_forms': self.skipped_forms,
                 'api_detected': bool(pages_and_forms.get('api_detected')),
                 'api_signals': pages_and_forms.get('api_signals', []),
                 'api_endpoints': pages_and_forms.get('api_endpoints', []),
@@ -956,7 +1029,7 @@ class WebScanner:
         
         if not inputs:
             return None
-        
+
         return {
             'url': action_url,
             'method': method,
@@ -964,6 +1037,90 @@ class WebScanner:
             'page': page_url,
             'content_type': form.get('enctype', ''),
         }
+
+    def _is_settings_form(self, form: Dict[str, Any]) -> bool:
+        """True for forms that configure the application or the session."""
+        path = urlparse(str(form.get('url', ''))).path.lower()
+        if path.startswith(self.SETTINGS_FORM_PATHS):
+            return True
+        for field in form.get('inputs', []):
+            name = str(field.get('name', '')).strip().lower()
+            if name in self.SETTINGS_FORM_FIELDS:
+                return True
+        return False
+
+    def _already_reported(self, finding_type: str, parameter: str, endpoint: str) -> bool:
+        """True when the same vulnerability class was already recorded for the
+        same parameter on the same endpoint path (e.g. one LFI parameter seen
+        through several crawled URL values must not produce duplicate findings)."""
+        endpoint_path = urlparse(str(endpoint)).path
+        for finding in self.findings:
+            if finding.get('type') != finding_type:
+                continue
+            if finding.get('parameter') != parameter:
+                continue
+            if urlparse(str(finding.get('location', ''))).path == endpoint_path:
+                return True
+        return False
+
+    def _looks_state_changing(self, form: Dict[str, Any]) -> bool:
+        """Heuristic for GET forms whose submission changes application state."""
+        for field in form.get('inputs', []):
+            name = str(field.get('name', ''))
+            if self.STATE_CHANGING_FIELD_RE.search(name):
+                return True
+        return False
+
+    async def _refresh_form_tokens(self, forms: List[Dict[str, Any]]) -> None:
+        """Re-fetch each token-bearing form page once so captured anti-CSRF
+        tokens are fresh before any payload is submitted."""
+        candidates = [form for form in forms if form.get('inputs') and any(
+            'token' in str(field.get('name', '')).lower()
+            or 'csrf' in str(field.get('name', '')).lower()
+            for field in form.get('inputs', [])
+        )]
+        if not candidates:
+            return
+        ssl_context = self._ssl_context()
+        async with aiohttp.ClientSession(headers=self._session_headers()) as session:
+            for form in candidates:
+                key = (str(form.get('url', '')), str(form.get('method', 'get')).lower())
+                if key in self._token_refreshed:
+                    continue
+                self._token_refreshed.add(key)
+                page_url = form.get('page') or form.get('url')
+                try:
+                    async with self._request(
+                        session, 'GET', page_url, 'form-refresh', ssl=ssl_context,
+                        timeout=aiohttp.ClientTimeout(total=min(self.timeout, 8)),
+                        headers=self._session_headers(), allow_redirects=False,
+                    ) as response:
+                        if response is None or response.status != 200:
+                            continue
+                        soup = BeautifulSoup(await response.text(), 'html.parser')
+                        page_form = soup.find('form')
+                        if not page_form:
+                            continue
+                        refreshed: Dict[str, str] = {}
+                        for field in page_form.find_all(['input', 'select', 'textarea']):
+                            name = field.get('name')
+                            if not name:
+                                continue
+                            if field.name == 'textarea':
+                                value = field.text or ''
+                            elif field.name == 'select':
+                                selected = field.find('option', selected=True) or field.find('option')
+                                value = selected.get('value', selected.text) if selected else ''
+                            else:
+                                value = field.get('value', '')
+                            refreshed[str(name)] = str(value)
+                        for input_field in form['inputs']:
+                            name = str(input_field.get('name', ''))
+                            if name and name in refreshed:
+                                input_field['value'] = refreshed[name]
+                except Exception as exc:
+                    self.logger.debug(f"Form token refresh error: {exc}")
+
     
     async def _check_security_headers(self, target: str):
         """Check for missing security headers"""
@@ -1062,9 +1219,42 @@ class WebScanner:
                 parsed = urlparse(page)
                 for parameter in parse_qs(parsed.query, keep_blank_values=True):
                     await self._test_sqli_on_query(session, ssl_context, page, parameter)
+
+            # Path segments that look like resource identifiers, e.g.
+            # /users/v1/{username} in a REST API.
+            for page, index, segment in self._path_param_candidates(crawl_data.get('pages', [])):
+                await self._test_sqli_on_path(session, ssl_context, page, index, segment)
+
+    @classmethod
+    def _path_param_candidates(cls, pages):
+        """Yield (page, segment_index, segment) for path segments that look like
+        resource identifiers rather than static route words."""
+        seen = set()
+        for page in pages:
+            try:
+                parsed = urlparse(normalize_url(page))
+            except ValueError:
+                continue
+            segments = [seg for seg in parsed.path.split('/') if seg]
+            for index, segment in enumerate(segments):
+                lowered = segment.lower()
+                if not re.fullmatch(r'[A-Za-z0-9._~%-]+', segment):
+                    continue
+                if lowered in cls.PATH_STATIC_SEGMENTS:
+                    continue
+                if lowered.endswith((
+                    '.php', '.html', '.htm', '.js', '.css', '.png', '.jpg',
+                    '.jpeg', '.ico', '.json', '.xml', '.txt',
+                )):
+                    continue
+                key = (parsed.netloc, index, lowered)
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield page, index, segment
     
     async def _test_sqli_on_input(self, session, ssl_context, form: Dict, param_name: str):
-        """Test one form field with error and true/false differential probes."""
+        """Test one form field with error, status-delta, boolean, and time probes."""
         if param_name.lower() in self.REDIRECT_PARAMETER_NAMES:
             return
 
@@ -1072,10 +1262,10 @@ class WebScanner:
             (field.get('value', '') for field in form.get('inputs', []) if field.get('name') == param_name),
             '',
         )
+        method = form.get('method', 'get').lower()
 
         async def probe(value: str, phase: str):
             data = self._form_data(form, param_name, value)
-            method = form.get('method', 'get').lower()
             try:
                 if method == 'get':
                     url = f"{form['url']}?{urlencode(data, doseq=True)}"
@@ -1099,70 +1289,16 @@ class WebScanner:
                 self.logger.debug(f"Form SQLi probe error: {exc}")
                 return None
 
-        baseline = await probe(str(original), 'sqli-baseline')
-        baseline_has_sql_error = bool(
-            baseline and self.verifier.verify_sql_error(baseline['text'], self.SQL_ERRORS)['error_signature_found']
+        await self._run_sqli_probes(
+            probe, param_name, form['url'], method.upper(), str(original),
         )
-        baseline_is_clean = baseline is not None and not baseline_has_sql_error
-        # Error-based probes are useful for DVWA and similar lab targets, but
-        # every probe below is comment-terminated; a lone quote is never
-        # reported as SQL injection by itself.
-        comment_payloads = self._sqli_comment_payloads()
-        error_candidates = []
-        for payload in comment_payloads[:3]:
-            error_response = await probe(payload, 'sqli-error')
-            if not error_response:
-                continue
-            verification = self.verifier.verify_sql_error(error_response['text'], self.SQL_ERRORS)
-            if verification['error_signature_found'] and baseline_is_clean:
-                error_candidates.append((payload, error_response, verification))
-        positive = await probe(self.SQLI_BOOLEAN_TRUE, 'sqli-positive')
-        negative = await probe(self.SQLI_BOOLEAN_FALSE, 'sqli-negative')
-        if not positive or not negative:
-            return
-
-        positive_error = self.verifier.verify_sql_error(positive['text'], self.SQL_ERRORS)
-        negative_error = self.verifier.verify_sql_error(negative['text'], self.SQL_ERRORS)
-        if error_candidates and (positive_error['error_signature_found'] or negative_error['error_signature_found']) and baseline_is_clean and param_name.lower() not in self.FILE_PARAMETER_NAMES:
-            payload, error_response, verification = error_candidates[0]
-            self.findings.append({
-                'type': 'SQL Injection', 'severity': 'critical',
-                'title': f'SQL injection verified in {param_name}',
-                'description': f'Form parameter "{param_name}" returned a recognizable database error across comment-terminated SQL probes.',
-                'location': form['url'], 'parameter': param_name, 'method': form.get('method', 'get').upper(),
-                'status_code': error_response['status'], 'confidence': verification['confidence'],
-                'state': verification['state'],
-                'evidence': f"Database error signature: {verification['matched_signature']}",
-                'verification': verification,
-                'remediation': 'Use parameterized queries and input validation',
-                'payload': payload,
-                'cwe': 'CWE-89', 'owasp': 'A03:2021-Injection',
-            })
-            return
-
-        if baseline:
-            differential = self.verifier.compare_sql_responses(
-                baseline['text'], positive['text'], negative['text'],
-                baseline['status'], positive['status'], negative['status'],
-            )
-            if differential['different_response']:
-                self.findings.append({
-                    'type': 'SQL Injection', 'severity': 'high',
-                    'title': f'Boolean response difference in {param_name}',
-                    'description': f'The true and false SQL conditions produced materially different responses for form parameter "{param_name}".',
-                    'location': form['url'], 'parameter': param_name, 'method': form.get('method', 'get').upper(),
-                    'status_code': positive['status'], 'confidence': differential['confidence'],
-                    'state': 'suspected',
-                    'evidence': f"Positive delta {differential['positive_delta']}; negative delta {differential['negative_delta']}; true/false similarity {differential['positive_negative_similarity']}.",
-                    'verification': differential,
-                    'remediation': 'Use parameterized queries and input validation',
-                    'payload': self.SQLI_BOOLEAN_TRUE,
-                    'cwe': 'CWE-89', 'owasp': 'A03:2021-Injection',
-                })
 
     async def _test_sqli_on_query(self, session, ssl_context, page: str, param_name: str):
         parsed = urlparse(normalize_url(page))
         original_params = parse_qs(parsed.query, keep_blank_values=True)
+
+        if param_name.lower() in self.REDIRECT_PARAMETER_NAMES:
+            return
 
         async def probe(value: str, phase: str):
             params = {key: list(values) for key, values in original_params.items()}
@@ -1179,47 +1315,152 @@ class WebScanner:
                 self.logger.debug(f"Query SQLi test error: {e}")
                 return None
 
-        if param_name.lower() in self.REDIRECT_PARAMETER_NAMES:
-            return
+        await self._run_sqli_probes(
+            probe, param_name, page, 'GET',
+            str(original_params.get(param_name, [''])[0]),
+        )
 
-        baseline = await probe(str(original_params.get(param_name, [''])[0]), 'sqli-baseline')
+    async def _test_sqli_on_path(self, session, ssl_context, page: str, index: int, segment: str):
+        """Fuzz a URL path segment that looks like a resource identifier."""
+        parsed = urlparse(normalize_url(page))
+        segments = [seg for seg in parsed.path.split('/') if seg]
+
+        def build_path_url(value: str) -> str:
+            replaced = list(segments)
+            replaced[index] = quote(str(value), safe='')
+            path = '/' + '/'.join(replaced)
+            return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ''))
+
+        async def probe(value: str, phase: str):
+            test_url = build_path_url(value)
+            try:
+                async with self._request(session, 'GET', test_url, phase, ssl=ssl_context,
+                                         timeout=aiohttp.ClientTimeout(total=self.timeout),
+                                         headers=self._session_headers(), allow_redirects=False) as response:
+                    if response is None:
+                        return None
+                    return {'status': response.status, 'text': await response.text(), 'url': test_url}
+            except Exception as exc:
+                self.logger.debug(f"Path SQLi test error: {exc}")
+                return None
+
+        # Boolean differentials are too noisy for path segments (soft-404s and
+        # router fallbacks); rely on error signatures, 5xx status deltas, and
+        # time-based signals only. Payloads are appended to the original
+        # segment so the request still matches the application route.
+        await self._run_sqli_probes(
+            probe, f'path:{segment}', page, 'GET', segment,
+            boolean_check=False, concat_original=True,
+        )
+
+    async def _run_sqli_probes(
+        self,
+        probe,
+        param_name: str,
+        location: str,
+        method: str,
+        original: str = '',
+        *,
+        boolean_check: bool = True,
+        time_check: bool = True,
+        concat_original: bool = False,
+    ) -> None:
+        """Run bounded SQLi probes and record the strongest available evidence.
+
+        probe(value, phase) -> {'status', 'text', 'url'} | None
+
+        Signal order: database error signature, HTTP status delta (2xx/3xx
+        baseline -> 5xx probe), true/false differential, time-based delay.
+
+        With concat_original, payloads are appended to the original value
+        instead of replacing it; this keeps path-segment probes routed into
+        the application instead of 404ing at the router.
+        """
+        is_file_like = param_name.lower() in self.FILE_PARAMETER_NAMES
+
+        def apply(payload: str) -> str:
+            return str(original) + payload if concat_original else payload
+
+        baseline_start = time.monotonic()
+        baseline = await probe(str(original), 'sqli-baseline')
+        baseline_elapsed = time.monotonic() - baseline_start
         baseline_has_sql_error = bool(
             baseline and self.verifier.verify_sql_error(baseline['text'], self.SQL_ERRORS)['error_signature_found']
         )
         baseline_is_clean = baseline is not None and not baseline_has_sql_error
+
+        # A lone quote is the classic error trigger and must always be sent;
+        # comment-terminated probes follow it.
         comment_payloads = self._sqli_comment_payloads()
-        error_candidates = []
-        for payload in comment_payloads[:3]:
-            error_response = await probe(payload, 'sqli-error')
+        error_payloads = ["'"] + [payload for payload in comment_payloads[:3] if payload != "'"]
+        error_signature = None
+        status_delta = None
+        for payload in error_payloads:
+            error_response = await probe(apply(payload), 'sqli-error')
             if not error_response:
                 continue
             verification = self.verifier.verify_sql_error(error_response['text'], self.SQL_ERRORS)
-            if verification['error_signature_found'] and baseline_is_clean:
-                error_candidates.append((payload, error_response, verification))
-        positive = await probe(self.SQLI_BOOLEAN_TRUE, 'sqli-positive')
-        negative = await probe(self.SQLI_BOOLEAN_FALSE, 'sqli-negative')
-        if not positive or not negative:
-            return
+            if (
+                error_signature is None
+                and verification['error_signature_found']
+                and baseline_is_clean
+                and not is_file_like
+            ):
+                error_signature = (payload, error_response, verification)
+            if (
+                status_delta is None
+                and baseline_is_clean
+                and baseline['status'] < 500 <= error_response['status']
+                and not is_file_like
+            ):
+                status_delta = (payload, error_response)
 
-        positive_error = self.verifier.verify_sql_error(positive['text'], self.SQL_ERRORS)
-        negative_error = self.verifier.verify_sql_error(negative['text'], self.SQL_ERRORS)
-        if error_candidates and (positive_error['error_signature_found'] or negative_error['error_signature_found']) and baseline_is_clean and param_name.lower() not in self.FILE_PARAMETER_NAMES:
-            payload, error_response, verification = error_candidates[0]
+        positive = await probe(apply(self.SQLI_BOOLEAN_TRUE), 'sqli-positive')
+        negative = await probe(apply(self.SQLI_BOOLEAN_FALSE), 'sqli-negative')
+
+        if error_signature:
+            payload, error_response, verification = error_signature
             self.findings.append({
                 'type': 'SQL Injection', 'severity': 'critical',
                 'title': f'SQL injection verified in {param_name}',
-                'description': f'Parameter "{param_name}" returned a recognizable database error across comment-terminated SQL probes.',
-                'location': page, 'parameter': param_name, 'method': 'GET',
-                'status_code': error_response['status'],
-                'confidence': verification['confidence'], 'state': verification['state'],
+                'description': f'Parameter "{param_name}" returned a recognizable database error across SQL probes.',
+                'location': location, 'parameter': param_name, 'method': method,
+                'status_code': error_response['status'], 'confidence': verification['confidence'],
+                'state': verification['state'],
                 'evidence': f"Database error signature: {verification['matched_signature']}",
                 'verification': verification,
-                'remediation': 'Use parameterized queries and input validation', 'payload': payload,
+                'remediation': 'Use parameterized queries and input validation',
+                'payload': payload,
                 'cwe': 'CWE-89', 'owasp': 'A03:2021-Injection',
             })
             return
 
-        if baseline:
+        if status_delta:
+            payload, error_response = status_delta
+            self.findings.append({
+                'type': 'SQL Injection', 'severity': 'critical',
+                'title': f'SQL injection verified in {param_name}',
+                'description': (
+                    f'Parameter "{param_name}" changed the endpoint response from HTTP '
+                    f'{baseline["status"]} to HTTP {error_response["status"]} on a SQL probe, '
+                    'consistent with an unhandled database error.'
+                ),
+                'location': location, 'parameter': param_name, 'method': method,
+                'status_code': error_response['status'], 'confidence': 'high',
+                'state': 'confirmed',
+                'evidence': f'HTTP status delta: {baseline["status"]} (baseline) -> {error_response["status"]} ({payload!r} probe)',
+                'verification': {
+                    'baseline_status': baseline['status'],
+                    'probe_status': error_response['status'],
+                    'payload': payload,
+                },
+                'remediation': 'Use parameterized queries and input validation',
+                'payload': payload,
+                'cwe': 'CWE-89', 'owasp': 'A03:2021-Injection',
+            })
+            return
+
+        if baseline and positive and negative and boolean_check:
             differential = self.verifier.compare_sql_responses(
                 baseline['text'], positive['text'], negative['text'],
                 baseline['status'], positive['status'], negative['status'],
@@ -1229,12 +1470,35 @@ class WebScanner:
                     'type': 'SQL Injection', 'severity': 'high',
                     'title': f'Boolean response difference in {param_name}',
                     'description': f'The true and false SQL conditions produced materially different responses for "{param_name}".',
-                    'location': page, 'parameter': param_name, 'method': 'GET',
+                    'location': location, 'parameter': param_name, 'method': method,
                     'status_code': positive['status'],
                     'confidence': differential['confidence'], 'state': 'suspected',
                     'evidence': f"Positive delta {differential['positive_delta']}; negative delta {differential['negative_delta']}; true/false similarity {differential['positive_negative_similarity']}.",
                     'verification': differential,
                     'remediation': 'Use parameterized queries and input validation', 'payload': self.SQLI_BOOLEAN_TRUE,
+                    'cwe': 'CWE-89', 'owasp': 'A03:2021-Injection',
+                })
+
+        if baseline is not None and time_check:
+            start = time.monotonic()
+            time_response = await probe(apply(self.SQLI_TIME_PAYLOAD), 'sqli-time')
+            elapsed = time.monotonic() - start
+            if time_response and (elapsed - baseline_elapsed) >= self.SQLI_TIME_THRESHOLD_SECONDS:
+                self.findings.append({
+                    'type': 'SQL Injection', 'severity': 'high',
+                    'title': f'Time-based blind SQL injection in {param_name}',
+                    'description': f'Parameter "{param_name}" delayed the endpoint response after a SLEEP probe.',
+                    'location': location, 'parameter': param_name, 'method': method,
+                    'status_code': time_response['status'], 'confidence': 'high',
+                    'state': 'confirmed',
+                    'evidence': f'Response took {elapsed:.1f}s vs baseline {baseline_elapsed:.1f}s after {self.SQLI_TIME_PAYLOAD!r}',
+                    'verification': {
+                        'baseline_elapsed': round(baseline_elapsed, 3),
+                        'probe_elapsed': round(elapsed, 3),
+                        'threshold': self.SQLI_TIME_THRESHOLD_SECONDS,
+                    },
+                    'remediation': 'Use parameterized queries and input validation',
+                    'payload': self.SQLI_TIME_PAYLOAD,
                     'cwe': 'CWE-89', 'owasp': 'A03:2021-Injection',
                 })
     
@@ -1269,68 +1533,172 @@ class WebScanner:
                             session, ssl_context, form, input_field['name']
                         )
 
+            # Path segments that look like resource identifiers.
+            for page, index, segment in self._path_param_candidates(crawl_data.get('pages', [])):
+                await self._test_xss_on_path(session, ssl_context, page, index, segment)
+
     async def _test_xss_on_query(self, session, ssl_context, page: str, param_name: str):
         """Check a discovered GET parameter for exact reflection.
 
         This is a reflection signal, not automatic proof of executable XSS; the
         report labels it as a suspected finding for manual context validation.
         """
-        test_payload = "<script>alert('XSS')</script>"
         try:
             page = normalize_url(page)
         except ValueError:
             return
         parsed = urlparse(page)
         params = parse_qs(parsed.query, keep_blank_values=True)
-        params[param_name] = [test_payload]
-        test_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(params, doseq=True), ""))
-        if not self.scope.is_allowed(test_url):
-            return
-        try:
-            async with self._request(
-                session, 'GET', test_url, 'xss',
-                ssl=ssl_context,
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                headers=self._session_headers(), allow_redirects=False
-            ) as response:
-                if response is None:
-                    return
-                text = await response.text()
-                verification = self.verifier.verify_reflection(test_payload, text)
-                if verification['payload_reflected']:
-                    self.findings.append({
-                        'type': 'Cross-Site Scripting (XSS)',
-                        'severity': 'medium',
-                        'title': f'Potential reflected XSS in {param_name}',
-                        'description': f'Parameter "{param_name}" reflects a test marker without contextual encoding',
-                        'location': page,
-                        'parameter': param_name,
-                        'status_code': response.status,
-                        'confidence': 'medium',
-                        'state': 'suspected',
-                        'evidence': f"Exact test marker was reflected in HTTP {response.status} response ({verification['context']})",
-                        'verification': verification,
-                        'cwe': 'CWE-79', 'owasp': 'A03:2021-Injection',
-                        'remediation': 'Contextually encode untrusted output and manually verify the rendering context',
-                        'payload': test_payload
-                    })
-        except Exception as e:
-            self.logger.debug(f"Query XSS test error: {e}")
-    
+        for test_payload in self.XSS_PAYLOAD_MATRIX:
+            params[param_name] = [test_payload]
+            test_url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(params, doseq=True), ""))
+            if not self.scope.is_allowed(test_url):
+                return
+            try:
+                async with self._request(
+                    session, 'GET', test_url, 'xss',
+                    ssl=ssl_context,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    headers=self._session_headers(), allow_redirects=False
+                ) as response:
+                    if response is None:
+                        return
+                    text = await response.text()
+                    verification = self.verifier.verify_reflection(test_payload, text)
+                    if verification['payload_reflected']:
+                        self.findings.append({
+                            'type': 'Cross-Site Scripting (XSS)',
+                            'severity': 'medium',
+                            'title': f'Potential reflected XSS in {param_name}',
+                            'description': f'Parameter "{param_name}" reflects a test marker without contextual encoding',
+                            'location': page,
+                            'parameter': param_name,
+                            'status_code': response.status,
+                            'confidence': 'medium',
+                            'state': 'suspected',
+                            'evidence': f"Exact test marker was reflected in HTTP {response.status} response ({verification['context']})",
+                            'verification': verification,
+                            'cwe': 'CWE-79', 'owasp': 'A03:2021-Injection',
+                            'remediation': 'Contextually encode untrusted output and manually verify the rendering context',
+                            'payload': test_payload
+                        })
+                        return
+            except Exception as e:
+                self.logger.debug(f"Query XSS test error: {e}")
+                return
+
     async def _test_xss_on_input(self, session, ssl_context, form: Dict, param_name: str):
-        """Test XSS on a specific input"""
-        test_payload = "<script>alert('XSS')</script>"
-        
-        try:
-            data = self._form_data(form, param_name, test_payload)
-            
-            if form['method'] == 'get':
-                url = f"{form['url']}?{urlencode(data)}"
+        """Test a form input for reflection; a payload that survives a later GET
+        of the same page is classified as stored XSS."""
+        form_method = str(form.get('method', 'get')).lower()
+        reflected_payload = None
+        reflected_status = None
+        reflected_verification = None
+
+        for test_payload in self.XSS_PAYLOAD_MATRIX:
+            try:
+                data = self._form_data(form, param_name, test_payload)
+                if form_method == 'get':
+                    url = f"{form['url']}?{urlencode(data, doseq=True)}"
+                    request_kwargs = {}
+                    request_method = 'GET'
+                else:
+                    url = form['url']
+                    request_kwargs = self._form_request_kwargs(form, data)
+                    request_method = form_method.upper()
                 async with self._request(
-                    session, 'GET', url, 'xss',
+                    session, request_method, url, 'xss',
                     ssl=ssl_context,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    headers=self._session_headers(), allow_redirects=False
+                    headers=self._session_headers(), allow_redirects=False,
+                    **request_kwargs,
+                ) as response:
+                    if response is None:
+                        return
+                    text = await response.text()
+                    verification = self.verifier.verify_reflection(test_payload, text)
+                    if verification['payload_reflected']:
+                        reflected_payload = test_payload
+                        reflected_status = response.status
+                        reflected_verification = verification
+                        break
+            except Exception as e:
+                self.logger.debug(f"XSS test error: {e}")
+                return
+
+        if not reflected_payload:
+            return
+
+        # A POSTed payload that also appears on a plain GET of the same page
+        # has persisted server-side: stored XSS.
+        if form_method != 'get':
+            try:
+                async with self._request(
+                    session, 'GET', form['url'], 'xss-persistence',
+                    ssl=ssl_context,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    headers=self._session_headers(), allow_redirects=False,
+                ) as response:
+                    if response is not None:
+                        text = await response.text()
+                        persisted = self.verifier.verify_reflection(reflected_payload, text)
+                        if persisted['payload_reflected']:
+                            self.findings.append({
+                                'type': 'Stored Cross-Site Scripting (XSS)',
+                                'severity': 'high',
+                                'title': f'Stored XSS in {param_name}',
+                                'description': f'Parameter "{param_name}" stores unfiltered input that the page returns on a later GET request.',
+                                'location': form['url'],
+                                'parameter': param_name,
+                                'status_code': response.status,
+                                'confidence': 'high',
+                                'state': 'suspected',
+                                'evidence': f"Exact test marker persisted in HTTP {response.status} response ({persisted['context']})",
+                                'verification': persisted,
+                                'remediation': 'Validate input and contextually encode output on every render path.',
+                                'payload': reflected_payload,
+                                'cwe': 'CWE-79', 'owasp': 'A03:2021-Injection',
+                            })
+                            return
+            except Exception as e:
+                self.logger.debug(f"XSS persistence check error: {e}")
+
+        self.findings.append({
+            'type': 'Cross-Site Scripting (XSS)',
+            'severity': 'medium',
+            'title': f'Potential reflected XSS in {param_name}',
+            'description': f'Parameter "{param_name}" reflects unfiltered user input',
+            'location': form['url'],
+            'parameter': param_name,
+            'status_code': reflected_status,
+            'confidence': 'medium',
+            'state': 'suspected',
+            'evidence': f"Exact test marker was reflected in HTTP {reflected_status} response ({reflected_verification['context']})",
+            'verification': reflected_verification,
+            'remediation': 'Implement proper input validation and output encoding',
+            'payload': reflected_payload
+        })
+
+    async def _test_xss_on_path(self, session, ssl_context, page: str, index: int, segment: str):
+        """Check reflection of a path segment (resource identifier)."""
+        parsed = urlparse(normalize_url(page))
+        segments = [seg for seg in parsed.path.split('/') if seg]
+
+        def build_path_url(value: str) -> str:
+            replaced = list(segments)
+            replaced[index] = quote(str(value), safe='')
+            return urlunsplit((parsed.scheme, parsed.netloc, '/' + '/'.join(replaced), parsed.query, ''))
+
+        for test_payload in self.XSS_PAYLOAD_MATRIX:
+            test_url = build_path_url(test_payload)
+            if not self.scope.is_allowed(test_url):
+                return
+            try:
+                async with self._request(
+                    session, 'GET', test_url, 'xss',
+                    ssl=ssl_context,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    headers=self._session_headers(), allow_redirects=False,
                 ) as response:
                     if response is None:
                         return
@@ -1340,50 +1708,23 @@ class WebScanner:
                         self.findings.append({
                             'type': 'Cross-Site Scripting (XSS)',
                             'severity': 'medium',
-                            'title': f'Potential reflected XSS in {param_name}',
-                            'description': f'Parameter "{param_name}" reflects unfiltered user input',
-                            'location': form['url'],
-                            'parameter': param_name,
+                            'title': f'Potential reflected XSS in path:{segment}',
+                            'description': f'Path segment "{segment}" reflects a test marker without contextual encoding',
+                            'location': page,
+                            'parameter': f'path:{segment}',
                             'status_code': response.status,
                             'confidence': 'medium',
                             'state': 'suspected',
                             'evidence': f"Exact test marker was reflected in HTTP {response.status} response ({verification['context']})",
                             'verification': verification,
-                            'remediation': 'Implement proper input validation and output encoding',
+                            'cwe': 'CWE-79', 'owasp': 'A03:2021-Injection',
+                            'remediation': 'Contextually encode untrusted output and manually verify the rendering context',
                             'payload': test_payload
                         })
-            else:
-                request_method = form.get('method', 'post').upper()
-                async with self._request(
-                    session, request_method, form['url'], 'xss',
-                    **self._form_request_kwargs(form, data),
-                    ssl=ssl_context,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    headers=self._session_headers(), allow_redirects=False
-                ) as response:
-                    if response is None:
                         return
-                    text = await response.text()
-                    verification = self.verifier.verify_reflection(test_payload, text)
-                    if verification['payload_reflected']:
-                        self.findings.append({
-                            'type': 'Cross-Site Scripting (XSS)',
-                            'severity': 'medium',
-                            'title': f'Potential reflected XSS in {param_name}',
-                            'description': f'Parameter "{param_name}" reflects unfiltered user input',
-                            'location': form['url'],
-                            'parameter': param_name,
-                            'status_code': response.status,
-                            'confidence': 'medium',
-                            'state': 'suspected',
-                            'evidence': f"Exact test marker was reflected in HTTP {response.status} response ({verification['context']})",
-                            'verification': verification,
-                            'remediation': 'Implement proper input validation and output encoding',
-                            'payload': test_payload
-                        })
-        
-        except Exception as e:
-            self.logger.debug(f"XSS test error: {e}")
+            except Exception as exc:
+                self.logger.debug(f"Path XSS test error: {exc}")
+                return
 
     async def _test_ssti(self, target: str, crawl_data: Dict[str, Any]):
         """Run baseline-aware arithmetic probes against template-like inputs."""
@@ -1592,6 +1933,8 @@ class WebScanner:
                     continue
                 for payload in payloads:
                     method, endpoint, kwargs, location = self._build_candidate_probe(source, candidate, parameter, payload)
+                    if self._already_reported('File Inclusion / LFI', parameter, location):
+                        break
                     response = await self._send_candidate_probe(session, ssl_context, method, endpoint, 'file-inclusion', kwargs)
                     if not response:
                         continue
@@ -1634,6 +1977,8 @@ class WebScanner:
                     continue
                 for payload in self.TRAVERSAL_PAYLOADS[:4]:
                     method, endpoint, kwargs, location = self._build_candidate_probe(source, candidate, parameter, payload)
+                    if self._already_reported('Directory Traversal', parameter, location):
+                        break
                     response = await self._send_candidate_probe(session, ssl_context, method, endpoint, 'path-traversal', kwargs)
                     if not response:
                         continue
@@ -1707,7 +2052,7 @@ class WebScanner:
                                              timeout=aiohttp.ClientTimeout(total=self.timeout),
                                              headers=self._session_headers(), allow_redirects=False, **kwargs) as response:
                         if response is None:
-                            return
+                            continue
                         location = response.headers.get('Location', '')
                         if location.startswith(canary):
                             self.findings.append({
@@ -1752,8 +2097,24 @@ class WebScanner:
         }
         
         ssl_context = self._ssl_context()
-        
+
         async with aiohttp.ClientSession(headers=self._session_headers()) as session:
+            # Fetch the application's own root page once. Soft-404 fallbacks
+            # serve this page for missing files; a body identical to it is a
+            # fallback, not the requested file.
+            root_text = None
+            try:
+                async with self._request(
+                    session, 'GET', target, 'soft-404-reference',
+                    ssl=ssl_context,
+                    timeout=aiohttp.ClientTimeout(total=min(self.timeout, 8)),
+                    headers=self._session_headers(), allow_redirects=True,
+                ) as root_response:
+                    if root_response is not None and root_response.status == 200:
+                        root_text = await root_response.text()
+            except Exception as exc:
+                self.logger.debug(f"Soft-404 reference error: {exc}")
+
             for file in sensitive_files:
                 try:
                     url = urljoin(target, file)
@@ -1761,87 +2122,105 @@ class WebScanner:
                         session, 'GET', url, 'sensitive-file',
                         ssl=ssl_context,
                         timeout=aiohttp.ClientTimeout(total=5),
-                        headers=self._session_headers()
+                        headers=self._session_headers(), allow_redirects=False,
                     ) as response:
                         if response is None:
-                            return
-                        if response.status == 200:
-                            text = await response.text()
-                            if len(text) > 0:
-                                content_type = response.headers.get('Content-Type', '')
-                                lowered = text.lower()
-                                expected = signatures.get(file)
-                                signature_match = bool(expected and any(marker.lower() in lowered for marker in expected))
-                                if file == '.git/config':
-                                    signature_match = bool(re.search(r'^\s*\[(?:core|remote(?:\s+|$))', text, re.I | re.M))
-                                elif file == '.env':
-                                    # A SPA fallback often contains '=' in
-                                    # HTML attributes. Require multiple real
-                                    # dotenv assignments and reject HTML.
-                                    assignments = re.findall(r'^\s*[A-Z][A-Z0-9_]{2,}\s*=\s*\S+', text, re.M)
-                                    signature_match = len(assignments) >= 2 and 'text/html' not in content_type.lower()
-                                elif file == 'config.yml':
-                                    yaml_lines = re.findall(r'^\s*[A-Za-z_][\w.-]{1,}\s*:\s+\S+', text, re.M)
-                                    signature_match = len(yaml_lines) >= 2 and 'text/html' not in content_type.lower()
-                                elif file == 'settings.py':
-                                    python_config = re.findall(r'^\s*(?:SECRET|DATABASE|DEBUG|ALLOWED_HOSTS)\w*\s*=|^\s*(?:from|import)\s+', text, re.I | re.M)
-                                    signature_match = len(python_config) >= 2 and 'text/html' not in content_type.lower()
-                                if file in {'.git/config', '.env', 'config.php', 'wp-config.php', 'config.yml', 'settings.py', 'web.config', '.htaccess', 'phpinfo.php', 'info.php'} and not signature_match:
-                                    continue
-                                if file in {'robots.txt', 'sitemap.xml'}:
-                                    severity = 'info'
-                                    title = f'Publicly accessible {file}'
-                                    description = f'The file {file} is publicly accessible and may disclose application paths.'
-                                    remediation = 'Review whether the file should be public and avoid listing sensitive paths.'
-                                else:
-                                    severity = 'high' if file in ['.git/config', '.env', 'config.php', 'wp-config.php'] else 'medium'
-                                    title = f'Sensitive file exposed: {file}'
-                                    description = f'The file {file} is publicly accessible and matched an expected content signature.'
-                                    remediation = 'Restrict access to sensitive configuration or diagnostic files.'
-                                self.findings.append({
-                                    'type': 'Information Disclosure',
-                                    'severity': severity,
-                                    'title': title,
-                                    'description': description,
-                                    'location': url,
-                                    'status_code': response.status,
-                                    'content_length': len(text),
-                                    'content_type': content_type,
-                                    'remediation': remediation,
-                                })
-                
+                            continue
+                        if response.status != 200:
+                            continue
+                        text = await response.text()
+                        if len(text) == 0:
+                            continue
+                        # Soft-404 fallback: same body as the application root.
+                        if root_text is not None and text == root_text:
+                            continue
+                        content_type = response.headers.get('Content-Type', '')
+                        lowered = text.lower()
+                        expected = signatures.get(file)
+                        signature_match = bool(expected and any(marker.lower() in lowered for marker in expected))
+                        if file == '.git/config':
+                            signature_match = bool(re.search(r'^\s*\[(?:core|remote(?:\s+|$))', text, re.I | re.M))
+                        elif file == '.env':
+                            # A SPA fallback often contains '=' in
+                            # HTML attributes. Require multiple real
+                            # dotenv assignments and reject HTML.
+                            assignments = re.findall(r'^\s*[A-Z][A-Z0-9_]{2,}\s*=\s*\S+', text, re.M)
+                            signature_match = len(assignments) >= 2 and 'text/html' not in content_type.lower()
+                        elif file == 'config.yml':
+                            yaml_lines = re.findall(r'^\s*[A-Za-z_][\w.-]{1,}\s*:\s+\S+', text, re.M)
+                            signature_match = len(yaml_lines) >= 2 and 'text/html' not in content_type.lower()
+                        elif file == 'settings.py':
+                            python_config = re.findall(r'^\s*(?:SECRET|DATABASE|DEBUG|ALLOWED_HOSTS)\w*\s*=|^\s*(?:from|import)\s+', text, re.I | re.M)
+                            signature_match = len(python_config) >= 2 and 'text/html' not in content_type.lower()
+                        elif file == 'robots.txt':
+                            # Any 200 page with "robots" in the path is not
+                            # enough; require robots directive lines.
+                            signature_match = bool(re.search(r'(?im)^\s*(?:user-agent|disallow|allow|sitemap)\s*:', text))
+                        elif file == 'sitemap.xml':
+                            signature_match = bool(re.search(r'(?i)<urlset|<\?xml', text))
+                        if file in {'.git/config', '.env', 'config.php', 'wp-config.php', 'config.yml', 'settings.py', 'web.config', '.htaccess', 'phpinfo.php', 'info.php', 'robots.txt', 'sitemap.xml'} and not signature_match:
+                            continue
+                        if file in {'robots.txt', 'sitemap.xml'}:
+                            severity = 'info'
+                            title = f'Publicly accessible {file}'
+                            description = f'The file {file} is publicly accessible and may disclose application paths.'
+                            remediation = 'Review whether the file should be public and avoid listing sensitive paths.'
+                        else:
+                            severity = 'high' if file in ['.git/config', '.env', 'config.php', 'wp-config.php'] else 'medium'
+                            title = f'Sensitive file exposed: {file}'
+                            description = f'The file {file} is publicly accessible and matched an expected content signature.'
+                            remediation = 'Restrict access to sensitive configuration or diagnostic files.'
+                        self.findings.append({
+                            'type': 'Information Disclosure',
+                            'severity': severity,
+                            'title': title,
+                            'description': description,
+                            'location': url,
+                            'status_code': response.status,
+                            'content_length': len(text),
+                            'content_type': content_type,
+                            'remediation': remediation,
+                        })
+
                 except Exception as e:
                     self.logger.debug(f"File check error for {file}: {e}")
     
     async def _test_csrf(self, target: str, crawl_data: Dict[str, Any]):
-        """Check for CSRF protection"""
+        """Check for CSRF protection on state-changing forms."""
         self.logger.info("[*] Checking CSRF protection...")
-        
+
         forms = crawl_data.get('forms', [])
         tested_forms = set()
-        
+
         for form in forms:
-            if form['method'] == 'post':
-                form_key = (
-                    form.get('method', 'post').lower(),
-                    form.get('url', ''),
-                    tuple(sorted(str(inp.get('name', '')) for inp in form.get('inputs', []))),
-                )
-                if form_key in tested_forms:
-                    continue
-                tested_forms.add(form_key)
-                # Check if form has CSRF token
-                has_csrf_token = any(
-                    'csrf' in inp['name'].lower() or 'token' in inp['name'].lower()
-                    for inp in form['inputs']
-                )
-                
-                if not has_csrf_token:
-                    self.findings.append({
-                        'type': 'CSRF',
-                        'severity': 'medium',
-                        'title': 'Missing CSRF protection',
-                        'description': f'Form at {form["page"]} lacks CSRF token',
-                        'location': form['url'],
-                        'remediation': 'Implement CSRF tokens for all state-changing operations'
-                    })
+            form_method = str(form.get('method', 'get')).lower()
+            if form_method not in {'get', 'post'}:
+                continue
+            # GET forms are only CSRF-relevant when they change state (DVWA low
+            # password change is a GET form); skip plain search/lookup forms.
+            if form_method == 'get' and not self._looks_state_changing(form):
+                continue
+            form_key = (
+                form_method,
+                form.get('url', ''),
+                tuple(sorted(str(inp.get('name', '')) for inp in form.get('inputs', []))),
+            )
+            if form_key in tested_forms:
+                continue
+            tested_forms.add(form_key)
+            # Check if form has CSRF token
+            has_csrf_token = any(
+                'csrf' in inp['name'].lower() or 'token' in inp['name'].lower()
+                for inp in form['inputs']
+            )
+
+            if not has_csrf_token:
+                self.findings.append({
+                    'type': 'CSRF',
+                    'severity': 'medium',
+                    'title': 'Missing CSRF protection',
+                    'description': f'{form_method.upper()} form at {form["page"]} lacks a CSRF token',
+                    'location': form['url'],
+                    'method': form_method.upper(),
+                    'remediation': 'Implement CSRF tokens for all state-changing operations'
+                })

@@ -3,8 +3,8 @@
 SP1D3R — Web Security Testing Assistant
 Main entry point for the scanner
 
-Author: Pangerkumzuk Longkumer
-Organization: NEXUSCIPHERGUARD INDIA
+Author: Nyi-001
+Co-developed with: Claude Code
 """
 
 import argparse

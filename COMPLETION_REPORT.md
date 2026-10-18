@@ -422,10 +422,10 @@ The Automated Penetration Testing Tool has been successfully reviewed and verifi
 ### Support & Resources
 
 - **Documentation**: README.md, QUICKSTART.md, IMPLEMENTATION_SUMMARY.md
-- **Issues**: https://github.com/pangerlkr/automated-pentest-tool/issues
+- **Issues**: https://github.com/Nyi-001/SP1D3R/issues
 - **License**: MIT
-- **Author**: Pangerkumzuk Longkumer
-- **Organization**: NEXUSCIPHERGUARD INDIA
+- **Author**: Nyi-001
+- **Contributors**: Nyi-001, Claude Code
 
 ---
 

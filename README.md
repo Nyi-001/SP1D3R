@@ -10,15 +10,14 @@ produces reader-friendly HTML, PDF, and JSON reports.
 </p>
 
 ```text
- ██████╗  ██████╗  ██╗  ██████╗  ██████╗  ██████╗
- ██╔════╝ ██╔══██╗ ██║ ██╔══██╗ ╚════██╗ ██╔══██╗
- ██║      ██║  ██║ ██║ ██║  ██║  █████╔╝ ██║  ██║
- ╚█████╗  ██████╔╝ ██║ ██║  ██║  ╚═══██╗ ██████╔╝
- ╚═══██╗ ██╔═══╝  ██║ ██║  ██║      ██║ ██╔══██╗
-██████╔╝ ██║      ██║ ██████╔╝ ██████╔╝ ██║  ██║
-╚═════╝  ╚═╝      ╚═╝ ╚═════╝  ╚═════╝  ╚═╝  ╚═╝
+███████╗██████╗  ██╗██████╗ ██████╗ ██████╗
+██╔════╝██╔══██╗███║██╔══██╗╚════██╗██╔══██╗
+███████╗██████╔╝╚██║██║  ██║ █████╔╝██████╔╝
+╚════██║██╔═══╝  ██║██║  ██║ ╚═══██╗██╔══██╗
+███████║██║      ██║██████╔╝██████╔╝██║  ██║
+╚══════╝╚═╝      ╚═╝╚═════╝ ╚═════╝ ╚═╝  ╚═╝
 
- SPID3R — Web Security Testing Assistant
+ SP1D3R — Web Security Testing Assistant
  Authorized testing only
 ```
 
@@ -64,11 +63,11 @@ python main.py --active --all-tests \
   --request-file burp_request.txt --verbose
 ```
 
-The request file may contain an absolute or relative request target, cookies, authorization headers, URL-encoded form data, or a JSON body. For a relative request target, SPID3R infers the URL from the `Host` header and defaults to HTTP unless `X-Forwarded-Proto: https` is present. With `-r` alone, scope is automatically limited to that request’s host; use `--allow` only when a broader or path-restricted scope is intentional. `Host`, `Content-Length`, and other hop-by-hop headers are not replayed; the captured cookies, authorization context, content type, and safe application headers are retained. Use a fresh authorized request and review the request-budget limit before running active checks.
+The request file may contain an absolute or relative request target, cookies, authorization headers, URL-encoded form data, or a JSON body. For a relative request target, SP1D3R infers the URL from the `Host` header and defaults to HTTP unless `X-Forwarded-Proto: https` is present. With `-r` alone, scope is automatically limited to that request’s host; use `--allow` only when a broader or path-restricted scope is intentional. `Host`, `Content-Length`, and other hop-by-hop headers are not replayed; the captured cookies, authorization context, content type, and safe application headers are retained. Use a fresh authorized request and review the request-budget limit before running active checks.
 
 The default output is a print-ready PDF security assessment report saved under `reports/`. It includes a cover page, executive summary, severity dashboard, scope and methodology, coverage, findings with evidence and remediation, attack-surface review, technology/services inventory, directory results, version-based CVE suggestions, tool status, and assessment notes. HTML remains available with `--output-format html` for interactive findings search and filters; JSON is available with `--output-format json`.
 
-After fingerprinting and port discovery, SPID3R automatically matches verified product/version observations and Nmap service versions against the editable `data/cve_catalog.json`. Use `--cve-check` to additionally query the public NVD CVE API using generated CPEs; responses are cached under `reports/.cve-cache/`. Online entries are reported as `suggested` CVE matches—not confirmed vulnerabilities—because banners may be spoofed and distributions may backport fixes. Set `NVD_API_KEY` in your shell for higher API limits. Confirm the exact package build and vendor advisory before remediation or exploitation decisions.
+After fingerprinting and port discovery, SP1D3R automatically matches verified product/version observations and Nmap service versions against the editable `data/cve_catalog.json`. Use `--cve-check` to additionally query the public NVD CVE API using generated CPEs; responses are cached under `reports/.cve-cache/`. Online entries are reported as `suggested` CVE matches—not confirmed vulnerabilities—because banners may be spoofed and distributions may backport fixes. Set `NVD_API_KEY` in your shell for higher API limits. Confirm the exact package build and vendor advisory before remediation or exploitation decisions.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
@@ -307,15 +306,16 @@ reporting:
 - Version-based vulnerability matching
 
 ### Web Application Scanner
-- SQL injection testing (blind, error-based, time-based)
-- Cross-Site Scripting (reflected, stored, DOM-based)
-- CSRF vulnerability detection
-- Directory traversal testing
-- File inclusion vulnerabilities (LFI/RFI)
-- Command injection testing
-- SSRF detection
+- SQL injection testing (error signature, HTTP status-delta, boolean differential, time-based blind)
+- Cross-Site Scripting testing (multi-payload matrix, reflected and stored classification)
+- Path-parameter fuzzing for REST-style resources (`/users/v1/{username}`)
+- CSRF protection checks (GET and POST forms; settings forms excluded from active testing)
+- Directory traversal and local file inclusion (marker-verified)
+- Command injection testing (marker-verified, non-destructive)
+- Open redirect detection (canary-based, destination not followed)
+- Sensitive-file exposure checks with soft-404 fallback protection
+- API/GraphQL route discovery and read-only endpoint verification
 - Security headers analysis
-- Cookie security testing
 
 ### SSL/TLS Tester
 - Certificate validation
@@ -351,7 +351,10 @@ Generated reports include:
 - [ ] Integration with SIEM systems
 - [ ] Mobile application testing module
 - [ ] Cloud infrastructure security scanning (AWS, Azure, GCP)
-- [ ] API security testing
+- [ ] Deeper API security testing (JWT analysis, BOLA/IDOR, mass assignment)
+- [ ] SSRF detection
+- [ ] File upload testing
+- [ ] DOM-based XSS analysis
 - [ ] Blockchain/smart contract auditing
 - [ ] Active exploitation module (with safeguards)
 - [ ] Collaborative team features
